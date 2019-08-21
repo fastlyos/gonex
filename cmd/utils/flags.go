@@ -218,6 +218,10 @@ var (
 		Name:  "whitelist",
 		Usage: "Comma separated block number-to-hash mappings to enforce (<number>=<hash>)",
 	}
+	RollbackFlag = cli.Uint64Flag{
+		Name:  "rollback",
+		Usage: "Block number to rollback the chain before starting",
+	}
 	// Light server and client settings
 	LightLegacyServFlag = cli.IntFlag{ // Deprecated in favor of light.serve, remove in 2021
 		Name:  "lightserv",
