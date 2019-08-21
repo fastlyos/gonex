@@ -191,6 +191,17 @@ func New(ctx *node.ServiceContext, config *Config) (*Ethereum, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	number := eth.blockchain.CurrentHeader().Number.Uint64()
+	rollback := config.RollbackNumber
+	if rollback > number {
+		log.Error("Rollback number is older than chain head", "number", number, "rollback", rollback)
+	} else if rollback > 0 {
+		log.Warn("Rolling-back chain as requested", "number", number, "rollback", rollback)
+		eth.blockchain.SetHead(rollback)
+		log.Error("Chain rollback was successful, resuming normal operation")
+	}
+
 	// Rewind the chain in case of an incompatible config upgrade.
 	if compat, ok := genesisErr.(*params.ConfigCompatError); ok {
 		log.Warn("Rewinding chain to upgrade configuration", "err", compat)

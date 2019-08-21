@@ -85,6 +85,7 @@ var AppHelpFlagGroups = []flagGroup{
 			utils.IdentityFlag,
 			utils.LightKDFFlag,
 			utils.WhitelistFlag,
+			utils.RollbackFlag,
 		},
 	},
 	{
