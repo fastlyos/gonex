@@ -1728,10 +1728,8 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 // The method writes all (header-and-body-valid) blocks to disk, then tries to
 // switch over to the new chain if the TD exceeded the current chain.
 func (bc *BlockChain) insertSideChain(block *types.Block, it *insertIterator) (int, []interface{}, []*types.Log, error) {
-	var (
-		externTd *big.Int
-		current  = bc.CurrentBlock()
-	)
+	externTd := bc.GetTd(block.ParentHash(), block.NumberU64()-1)
+	current := bc.CurrentBlock()
 	// The first sidechain block error is already verified to be ErrPrunedAncestor.
 	// Since we don't import them here, we expect ErrUnknownAncestor for the remaining
 	// ones. Any other errors means that the block is invalid, and should not be written
@@ -1760,9 +1758,6 @@ func (bc *BlockChain) insertSideChain(block *types.Block, it *insertIterator) (i
 				// mechanism.
 				return it.index, nil, nil, errors.New("sidechain ghost-state attack")
 			}
-		}
-		if externTd == nil {
-			externTd = bc.GetTd(block.ParentHash(), block.NumberU64()-1)
 		}
 		externTd = new(big.Int).Add(externTd, block.Difficulty())
 
