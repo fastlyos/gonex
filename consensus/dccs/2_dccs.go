@@ -19,7 +19,16 @@ package dccs
 
 import (
 	"bytes"
+	"context"
 	"time"
+
+	"github.com/ethereum/go-ethereum/params"
+
+	"github.com/ethereum/go-ethereum/core/rawdb"
+
+	"github.com/ethereum/go-ethereum/eth/filters"
+	"github.com/ethereum/go-ethereum/ethdb"
+	"github.com/ethereum/go-ethereum/rpc"
 
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/common"
@@ -88,6 +97,40 @@ func (d *Dccs) verifyHeader2(chain consensus.ChainReader, header *types.Header, 
 	// All basic checks passed, verify cascading fields
 	return d.verifyCascadingFields2(chain, header, parents)
 }
+
+type LogFilterBackend struct {
+	chain consensus.ChainReader
+	db    ethdb.Reader
+}
+
+func (b *LogFilterBackend) HeaderByNumber(ctx context.Context, blockNr rpc.BlockNumber) (*types.Header, error) {
+	return b.chain.GetHeaderByNumber(uint64(blockNr.Int64())), nil
+}
+
+func (b *LogFilterBackend) HeaderByHash(ctx context.Context, blockHash common.Hash) (*types.Header, error) {
+	return b.chain.GetHeaderByHash(blockHash), nil
+}
+
+func (b *LogFilterBackend) GetReceipts(ctx context.Context, blockHash common.Hash) (types.Receipts, error) {
+	header := b.chain.GetHeaderByHash(blockHash)
+	if header == nil {
+		return nil, nil
+	}
+	receipts := rawdb.ReadReceipts(b.db, blockHash, header.Number.Uint64(), b.chain.Config())
+	return receipts, nil
+}
+
+func (b *LogFilterBackend) GetLogs(ctx context.Context, blockHash common.Hash) ([][]*types.Log, error) {
+	receipts, _ := b.GetReceipts(ctx, blockHash)
+	logs := make([][]*types.Log, len(receipts))
+	for i, receipt := range receipts {
+		logs[i] = receipt.Logs
+	}
+	return logs, nil
+}
+
+// This nil assignment ensures compile time that LogFilterBackend implements filters.SimpleBackend.
+var _ filters.SimpleBackend = (*LogFilterBackend)(nil)
 
 // verifyCascadingFields2 verifies all the header fields that are not standalone,
 // rather depend on a batch of previous headers. The caller may optionally pass
@@ -185,6 +228,45 @@ func (d *Dccs) verifySeal2(chain consensus.ChainReader, header *types.Header, pa
 	return nil
 }
 
+// Keccak256("Joined(address,address)")
+var joinedTopic = common.HexToHash("7702dccda75540ad1dca8d5276c048f4a5c0e4203f6da4be214bfb1901b203ea")
+
+// Keccak256("Left(address,address)")
+var leftTopic = common.HexToHash("4b9ee4dd061ba088b22898a02491f3896a4a580c6cda8783ca579ee159f8e8c5")
+
+// changedSealers filters the block for any joining or leaving sealer.
+// Newly joined sealer is mapped to it's coinbase address, left sealer is mapped to ZeroAddress.
+func (d *Dccs) changedSealers(header *types.Header, chain consensus.ChainReader) (changed map[common.Address]common.Address, err error) {
+	logs, err := filters.BlockLogs(header,
+		[]common.Address{d.config.Contract},
+		[][]common.Hash{{joinedTopic, leftTopic}},
+		&LogFilterBackend{
+			chain: chain,
+			db:    d.db,
+		})
+
+	if err != nil {
+		return nil, err
+	}
+	if len(logs) == 0 {
+		return nil, nil
+	}
+
+	changed = make(map[common.Address]common.Address, len(logs))
+	for _, l := range logs {
+		// len(log.Data) must be 32 * 2 here
+		sealer := common.BytesToAddress(l.Data[32:])
+		switch l.Topics[0] {
+		case joinedTopic:
+			staker := common.BytesToAddress(l.Data[:32])
+			changed[sealer] = staker
+		case leftTopic:
+			changed[sealer] = params.ZeroAddress
+		}
+	}
+	return
+}
+
 // prepare2 implements consensus.Engine, preparing all the consensus fields of the
 // header for running the transactions on top.
 func (d *Dccs) prepare2(chain consensus.ChainReader, header *types.Header) error {
@@ -209,6 +291,19 @@ func (d *Dccs) prepare2(chain consensus.ChainReader, header *types.Header) error
 		header.Extra = append(header.Extra, bytes.Repeat([]byte{0x00}, extraVanity-len(header.Extra))...)
 	}
 	header.Extra = header.Extra[:extraVanity]
+
+	changed, err := d.changedSealers(parent, chain)
+	if err != nil {
+		log.Error("failed to get changed sealer from log", "parent", parent.Number, "err", err)
+		return err
+	}
+	for sealer, staker := range changed {
+		if staker == params.ZeroAddress {
+			log.Error("Sealer left", "sealer", sealer)
+		} else {
+			log.Error("Sealer joined", "sealer", sealer, "coinbase", staker)
+		}
+	}
 
 	if d.config.IsCheckpoint(number) {
 		for _, signer := range snap.signers1() {
