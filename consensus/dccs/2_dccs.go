@@ -22,7 +22,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/ethereum/go-ethereum/params"
+	"github.com/ethereum/go-ethereum/rlp"
 
 	"github.com/ethereum/go-ethereum/core/rawdb"
 
@@ -60,7 +60,6 @@ func (d *Dccs) verifyHeader2(chain consensus.ChainReader, header *types.Header, 
 		return consensus.ErrFutureBlock
 	}
 
-	checkpoint := d.config.IsCheckpoint(number)
 	// Check that the extra-data contains both the vanity and signature
 	if len(header.Extra) < extraVanity {
 		return errMissingVanity
@@ -69,13 +68,14 @@ func (d *Dccs) verifyHeader2(chain consensus.ChainReader, header *types.Header, 
 		return errMissingSignature
 	}
 	// Ensure that the extra-data contains a signer list on checkpoint, but none otherwise
-	signersBytes := len(header.Extra) - extraVanity - extraSeal
-	if !checkpoint && signersBytes != 0 {
-		return errExtraSigners
-	}
-	if checkpoint && signersBytes%common.AddressLength != 0 {
-		return errInvalidCheckpointSigners
-	}
+	// checkpoint := d.config.IsCheckpoint(number)
+	// signersBytes := len(header.Extra) - extraVanity - extraSeal
+	// if !checkpoint && signersBytes != 0 {
+	// 	return errExtraSigners
+	// }
+	// if checkpoint && signersBytes%common.AddressLength != 0 {
+	// 	return errInvalidCheckpointSigners
+	// }
 	// Ensure that the mix digest is zero as we don't have fork protection currently
 	if header.MixDigest != (common.Hash{}) {
 		return errInvalidMixDigest
@@ -97,40 +97,6 @@ func (d *Dccs) verifyHeader2(chain consensus.ChainReader, header *types.Header, 
 	// All basic checks passed, verify cascading fields
 	return d.verifyCascadingFields2(chain, header, parents)
 }
-
-type LogFilterBackend struct {
-	chain consensus.ChainReader
-	db    ethdb.Reader
-}
-
-func (b *LogFilterBackend) HeaderByNumber(ctx context.Context, blockNr rpc.BlockNumber) (*types.Header, error) {
-	return b.chain.GetHeaderByNumber(uint64(blockNr.Int64())), nil
-}
-
-func (b *LogFilterBackend) HeaderByHash(ctx context.Context, blockHash common.Hash) (*types.Header, error) {
-	return b.chain.GetHeaderByHash(blockHash), nil
-}
-
-func (b *LogFilterBackend) GetReceipts(ctx context.Context, blockHash common.Hash) (types.Receipts, error) {
-	header := b.chain.GetHeaderByHash(blockHash)
-	if header == nil {
-		return nil, nil
-	}
-	receipts := rawdb.ReadReceipts(b.db, blockHash, header.Number.Uint64(), b.chain.Config())
-	return receipts, nil
-}
-
-func (b *LogFilterBackend) GetLogs(ctx context.Context, blockHash common.Hash) ([][]*types.Log, error) {
-	receipts, _ := b.GetReceipts(ctx, blockHash)
-	logs := make([][]*types.Log, len(receipts))
-	for i, receipt := range receipts {
-		logs[i] = receipt.Logs
-	}
-	return logs, nil
-}
-
-// This nil assignment ensures compile time that LogFilterBackend implements filters.SimpleBackend.
-var _ filters.SimpleBackend = (*LogFilterBackend)(nil)
 
 // verifyCascadingFields2 verifies all the header fields that are not standalone,
 // rather depend on a batch of previous headers. The caller may optionally pass
@@ -155,22 +121,23 @@ func (d *Dccs) verifyCascadingFields2(chain consensus.ChainReader, header *types
 	if parent.Time+d.config.Period > header.Time {
 		return ErrInvalidTimestamp
 	}
-	// Retrieve the snapshot needed to verify this header and cache it
-	snap, err := d.snapshot1(chain, header, parents)
-	if err != nil {
-		return err
-	}
-	// If the block is a checkpoint block, verify the signer list
-	if d.config.IsCheckpoint(number) {
-		signers := make([]byte, len(snap.Signers)*common.AddressLength)
-		for i, signer := range snap.signers1() {
-			copy(signers[i*common.AddressLength:], signer.Address[:])
-		}
-		extraSuffix := len(header.Extra) - extraSeal
-		if !bytes.Equal(header.Extra[extraVanity:extraSuffix], signers) {
-			return errInvalidCheckpointSigners
-		}
-	}
+	// TODO
+	// // Retrieve the snapshot needed to verify this header and cache it
+	// snap, err := d.snapshot1(chain, header, parents)
+	// if err != nil {
+	// 	return err
+	// }
+	// // If the block is a checkpoint block, verify the signer list
+	// if d.config.IsCheckpoint(number) {
+	// 	signers := make([]byte, len(snap.Signers)*common.AddressLength)
+	// 	for i, signer := range snap.signers1() {
+	// 		copy(signers[i*common.AddressLength:], signer.Address[:])
+	// 	}
+	// 	extraSuffix := len(header.Extra) - extraSeal
+	// 	if !bytes.Equal(header.Extra[extraVanity:extraSuffix], signers) {
+	// 		return errInvalidCheckpointSigners
+	// 	}
+	// }
 	// All basic checks passed, verify the seal and return
 	return d.verifySeal2(chain, header, parents)
 }
@@ -234,9 +201,11 @@ var joinedTopic = common.HexToHash("7702dccda75540ad1dca8d5276c048f4a5c0e4203f6d
 // Keccak256("Left(address,address)")
 var leftTopic = common.HexToHash("4b9ee4dd061ba088b22898a02491f3896a4a580c6cda8783ca579ee159f8e8c5")
 
-// changedSealers filters the block for any joining or leaving sealer.
-// Newly joined sealer is mapped to it's coinbase address, left sealer is mapped to ZeroAddress.
-func (d *Dccs) changedSealers(header *types.Header, chain consensus.ChainReader) (changed map[common.Address]common.Address, err error) {
+// getSealerRequests filters the block for any joining or leaving sealer.
+// Newly joined sealer is mapped to it's coinbase address, left sealer is mapped to nil.
+// Sealer joining and leaving txs can be confirmed in the same block, and the order of the requests
+// is preserved.
+func (d *Dccs) getSealerRequests(header *types.Header, chain consensus.ChainReader) (requests [][2]*common.Address, err error) {
 	logs, err := filters.BlockLogs(header,
 		[]common.Address{d.config.Contract},
 		[][]common.Hash{{joinedTopic, leftTopic}},
@@ -252,19 +221,67 @@ func (d *Dccs) changedSealers(header *types.Header, chain consensus.ChainReader)
 		return nil, nil
 	}
 
-	changed = make(map[common.Address]common.Address, len(logs))
 	for _, l := range logs {
 		// len(log.Data) must be 32 * 2 here
 		sealer := common.BytesToAddress(l.Data[32:])
 		switch l.Topics[0] {
 		case joinedTopic:
 			staker := common.BytesToAddress(l.Data[:32])
-			changed[sealer] = staker
+			log.Error("Sealer joined", "sealer", sealer, "coinbase", staker)
+			requests = append(requests, [2]*common.Address{&sealer, &staker})
 		case leftTopic:
-			changed[sealer] = params.ZeroAddress
+			log.Error("Sealer left", "sealer", sealer)
+			requests = append(requests, [2]*common.Address{&sealer, nil})
 		}
 	}
 	return
+}
+
+type LogFilterBackend struct {
+	chain consensus.ChainReader
+	db    ethdb.Reader
+}
+
+func (b *LogFilterBackend) HeaderByNumber(ctx context.Context, blockNr rpc.BlockNumber) (*types.Header, error) {
+	return b.chain.GetHeaderByNumber(uint64(blockNr.Int64())), nil
+}
+
+func (b *LogFilterBackend) HeaderByHash(ctx context.Context, blockHash common.Hash) (*types.Header, error) {
+	return b.chain.GetHeaderByHash(blockHash), nil
+}
+
+func (b *LogFilterBackend) GetReceipts(ctx context.Context, blockHash common.Hash) (types.Receipts, error) {
+	header := b.chain.GetHeaderByHash(blockHash)
+	if header == nil {
+		return nil, nil
+	}
+	receipts := rawdb.ReadReceipts(b.db, blockHash, header.Number.Uint64(), b.chain.Config())
+	return receipts, nil
+}
+
+func (b *LogFilterBackend) GetLogs(ctx context.Context, blockHash common.Hash) ([][]*types.Log, error) {
+	receipts, _ := b.GetReceipts(ctx, blockHash)
+	logs := make([][]*types.Log, len(receipts))
+	for i, receipt := range receipts {
+		logs[i] = receipt.Logs
+	}
+	return logs, nil
+}
+
+// This nil assignment ensures compile time that LogFilterBackend implements filters.SimpleBackend.
+var _ filters.SimpleBackend = (*LogFilterBackend)(nil)
+
+// A single byte right after extraVanity indicates the DataType, allow multiple
+// structures and/or versions of RLP can be decoded from the extra bytes.
+const (
+	ExtendedDataTypeSealer byte = 0x00
+)
+
+// ExtendedDataSealer is RLP-encoded in Header.Extra[extraVanity+1:len-extraSeal]
+type ExtendedDataSealer struct {
+	Root      common.Hash          // sealers digest
+	CrossLink common.Hash          // cross-link header hash
+	Requests  [][2]*common.Address // []{signer, coinbase}
 }
 
 // prepare2 implements consensus.Engine, preparing all the consensus fields of the
@@ -292,24 +309,35 @@ func (d *Dccs) prepare2(chain consensus.ChainReader, header *types.Header) error
 	}
 	header.Extra = header.Extra[:extraVanity]
 
-	changed, err := d.changedSealers(parent, chain)
-	if err != nil {
-		log.Error("failed to get changed sealer from log", "parent", parent.Number, "err", err)
-		return err
-	}
-	for sealer, staker := range changed {
-		if staker == params.ZeroAddress {
-			log.Error("Sealer left", "sealer", sealer)
-		} else {
-			log.Error("Sealer joined", "sealer", sealer, "coinbase", staker)
-		}
-	}
-
 	if d.config.IsCheckpoint(number) {
 		for _, signer := range snap.signers1() {
 			header.Extra = append(header.Extra, signer.Address[:]...)
 		}
+	} else {
+		requests, err := d.getSealerRequests(parent, chain)
+		if err != nil {
+			log.Error("failed to get changed sealer from log", "parent", parent.Number, "err", err)
+			return err
+		}
+		log.Error("requests", "requests", requests)
+		if len(requests) > 0 {
+			sdata := ExtendedDataSealer{
+				Root:      common.Hash{}, // TODO
+				CrossLink: common.Hash{}, // TODO
+				Requests:  requests,
+			}
+			log.Error("sdata", "sdata", sdata)
+			sbytes, err := rlp.EncodeToBytes(sdata)
+			log.Error("sbytes", "len", len(sbytes), "data", common.Bytes2Hex(sbytes))
+			if err != nil {
+				return err
+			}
+
+			header.Extra = append(header.Extra, ExtendedDataTypeSealer)
+			header.Extra = append(header.Extra, sbytes...)
+		}
 	}
+
 	header.Extra = append(header.Extra, make([]byte, extraSeal)...)
 
 	// Mix digest is reserved for now, set to empty
