@@ -20,6 +20,7 @@ package dccs
 import (
 	"bytes"
 	"context"
+	"errors"
 	"time"
 
 	"github.com/ethereum/go-ethereum/core/rawdb"
@@ -35,6 +36,10 @@ import (
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/log"
+)
+
+var (
+	errInvalidNonce = errors.New("Invalid block nonce as distant from the last sealer application block")
 )
 
 // Init the second hardfork of DCCS consensus
@@ -119,6 +124,18 @@ func (d *Dccs) verifyCascadingFields2(chain consensus.ChainReader, header *types
 	if parent.Time+d.config.Period > header.Time {
 		return ErrInvalidTimestamp
 	}
+
+	// verify the distant from the last sealer application block
+	var nonce types.BlockNonce
+	if isSealerApplicationBlock(parent) {
+		nonce = types.EncodeNonce(1)
+	} else {
+		nonce = types.EncodeNonce(header.Nonce.Uint64() + 1)
+	}
+	if header.Nonce != nonce {
+		return errInvalidNonce
+	}
+
 	// TODO
 	// // Retrieve the snapshot needed to verify this header and cache it
 	// snap, err := d.snapshot1(chain, header, parents)
@@ -305,7 +322,13 @@ func (d *Dccs) prepare2(chain consensus.ChainReader, header *types.Header) error
 		return consensus.ErrUnknownAncestor
 	}
 
-	header.Nonce = types.BlockNonce{}
+	// record the distant from the last sealer application block
+	if isSealerApplicationBlock(parent) {
+		header.Nonce = types.EncodeNonce(1)
+	} else {
+		header.Nonce = types.EncodeNonce(header.Nonce.Uint64() + 1)
+	}
+
 	d.prepareBeneficiary(header, chain)
 
 	// Set the correct difficulty
