@@ -256,12 +256,20 @@ func (d *Dccs) getStateSnapshot(chain consensus.ChainReader, header *types.Heade
 // + the header in parents if available (nessesary for batch headers processing)
 // + chain.GetHeaderByNumber(number), if all else fail
 func getAvailableHeader(number uint64, header *types.Header, parents []*types.Header, chain consensus.ChainReader) *types.Header {
-	headerNumber := header.Number.Uint64()
-	if number == headerNumber {
-		return header
-	}
-	if number > headerNumber {
-		return chain.GetHeaderByNumber(number)
+	var headerNumber uint64
+	if header != nil {
+		headerNumber = header.Number.Uint64()
+		if number == headerNumber {
+			return header
+		}
+		if number > headerNumber {
+			return chain.GetHeaderByNumber(number)
+		}
+	} else {
+		if len(parents) == 0 {
+			return chain.GetHeaderByNumber(number)
+		}
+		headerNumber = parents[len(parents)-1].Number.Uint64() + 1
 	}
 	idx := len(parents) - int(headerNumber) + int(number)
 	if idx >= 0 {
