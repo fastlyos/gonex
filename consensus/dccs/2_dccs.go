@@ -48,6 +48,26 @@ func (d *Dccs) init2() *Dccs {
 	return d
 }
 
+// TODO: UNOPTIMIZED
+// getSealers gets the authorized sealers for a block number
+// the list is deterministically sorted by sealer addresses
+func (d *Dccs) getSealers(number uint64, chain consensus.ChainReader, parents []*types.Header) ([]common.Address, error) {
+	found := map[common.Address]struct{}{}
+	list := []common.Address{}
+	for i := d.config.LeakDuration; i > 0; i++ {
+		h := getAvailableHeader(number-i, nil, parents, chain)
+		sealer, err := ecrecover(h, d.signatures)
+		if err != nil {
+			return nil, err
+		}
+		if _, exists := found[sealer]; !exists {
+			found[sealer] = struct{}{}
+			list = append(list, sealer)
+		}
+	}
+	return list, nil
+}
+
 // verifyHeader2 checks whether a header conforms to the consensus rules.The
 // caller may optionally pass in a batch of parents (ascending order) to avoid
 // looking those up from the database. This is useful for concurrently verifying

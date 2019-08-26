@@ -124,7 +124,8 @@ func (w *wizard) makeGenesis() {
 			ThangLongBlock: common.Big0,
 			ThangLongEpoch: 3000,
 			// CoLoa hardfork
-			CoLoaBlock: common.Big0,
+			CoLoaBlock:   common.Big0,
+			LeakDuration: 1024,
 		}
 		fmt.Println()
 		fmt.Println("How many seconds should blocks take? (default = 2)")
@@ -211,6 +212,11 @@ func (w *wizard) makeGenesis() {
 		fmt.Println()
 		fmt.Printf("Which block should CoLoa come into effect? (default = %v)\n", genesis.Config.Dccs.CoLoaBlock)
 		genesis.Config.Dccs.CoLoaBlock = w.readDefaultBigInt(genesis.Config.Dccs.CoLoaBlock)
+
+		// CoLoa hardfork enabled
+		fmt.Println()
+		fmt.Printf("After how many block of inactivity should a sealer is kicked out? (default = %v)\n", genesis.Config.Dccs.LeakDuration)
+		genesis.Config.Dccs.LeakDuration = uint64(w.readDefaultInt(int(genesis.Config.Dccs.LeakDuration)))
 
 	default:
 		log.Crit("Invalid consensus engine choice", "choice", choice)
