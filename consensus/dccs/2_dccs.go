@@ -22,8 +22,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/ethereum/go-ethereum/rlp"
-
 	"github.com/ethereum/go-ethereum/core/rawdb"
 
 	"github.com/ethereum/go-ethereum/eth/filters"
@@ -195,48 +193,6 @@ func (d *Dccs) verifySeal2(chain consensus.ChainReader, header *types.Header, pa
 	return nil
 }
 
-// Keccak256("Joined(address,address)")
-var joinedTopic = common.HexToHash("7702dccda75540ad1dca8d5276c048f4a5c0e4203f6da4be214bfb1901b203ea")
-
-// Keccak256("Left(address,address)")
-var leftTopic = common.HexToHash("4b9ee4dd061ba088b22898a02491f3896a4a580c6cda8783ca579ee159f8e8c5")
-
-// getSealerRequests filters the block for any joining or leaving sealer.
-// Newly joined sealer is mapped to it's coinbase address, left sealer is mapped to nil.
-// Sealer joining and leaving txs can be confirmed in the same block, and the order of the requests
-// is preserved.
-func (d *Dccs) getSealerRequests(header *types.Header, chain consensus.ChainReader) (requests [][2]*common.Address, err error) {
-	logs, err := filters.BlockLogs(header,
-		[]common.Address{d.config.Contract},
-		[][]common.Hash{{joinedTopic, leftTopic}},
-		&LogFilterBackend{
-			chain: chain,
-			db:    d.db,
-		})
-
-	if err != nil {
-		return nil, err
-	}
-	if len(logs) == 0 {
-		return nil, nil
-	}
-
-	for _, l := range logs {
-		// len(log.Data) must be 32 * 2 here
-		sealer := common.BytesToAddress(l.Data[32:])
-		switch l.Topics[0] {
-		case joinedTopic:
-			staker := common.BytesToAddress(l.Data[:32])
-			log.Error("Sealer joined", "sealer", sealer, "coinbase", staker)
-			requests = append(requests, [2]*common.Address{&sealer, &staker})
-		case leftTopic:
-			log.Error("Sealer left", "sealer", sealer)
-			requests = append(requests, [2]*common.Address{&sealer, nil})
-		}
-	}
-	return
-}
-
 type LogFilterBackend struct {
 	chain consensus.ChainReader
 	db    ethdb.Reader
@@ -271,34 +227,91 @@ func (b *LogFilterBackend) GetLogs(ctx context.Context, blockHash common.Hash) (
 // This nil assignment ensures compile time that LogFilterBackend implements filters.SimpleBackend.
 var _ filters.SimpleBackend = (*LogFilterBackend)(nil)
 
+// Keccak256("Joined(address,address)")
+var joinedTopic = common.HexToHash("7702dccda75540ad1dca8d5276c048f4a5c0e4203f6da4be214bfb1901b203ea")
+
+// Keccak256("Left(address,address)")
+var leftTopic = common.HexToHash("4b9ee4dd061ba088b22898a02491f3896a4a580c6cda8783ca579ee159f8e8c5")
+
+type sealerApplication struct {
+	sealer common.Address
+	action bool // isJoined
+}
+
+// getSealerApplications filters the block for any joining or leaving sealer.
+// Newly joined sealer is mapped to it's coinbase address, left sealer is mapped to nil.
+// Sealer joining and leaving txs can be confirmed in the same block, and the order of the requests
+// is preserved.
+func (d *Dccs) getSealerApplications(header *types.Header, chain consensus.ChainReader) ([]sealerApplication, error) {
+	logs, err := filters.BlockLogs(header,
+		[]common.Address{d.config.Contract},
+		[][]common.Hash{{joinedTopic, leftTopic}},
+		&LogFilterBackend{
+			chain: chain,
+			db:    d.db,
+		})
+
+	if err != nil {
+		return nil, err
+	}
+	if len(logs) == 0 {
+		return nil, nil
+	}
+
+	applications := make([]sealerApplication, len(logs))
+
+	for i, l := range logs {
+		// len(log.Data) must be 32 * 2 here
+		sealer := common.BytesToAddress(l.Data[32:])
+		var joined bool
+		if l.Topics[0] == joinedTopic {
+			joined = true
+			staker := common.BytesToAddress(l.Data[:32])
+			log.Error("Sealer joined", "sealer", sealer, "coinbase", staker)
+		} else {
+			log.Error("Sealer left", "sealer", sealer)
+		}
+		applications[i] = sealerApplication{
+			sealer: sealer,
+			action: joined,
+		}
+	}
+	return applications, nil
+}
+
 // A single byte right after extraVanity indicates the DataType, allow multiple
 // structures and/or versions of RLP can be decoded from the extra bytes.
 const (
-	ExtendedDataTypeSealer byte = 0x00
+	ExtendedDataTypeNone         byte = 0x00
+	ExtendedDataTypeSealerJoin   byte = 0xF0
+	ExtendedDataTypeSealerLeave  byte = 0xF1
+	ExtendedDataTypeSealerLeak   byte = 0xF2 // reserved
+	ExtendedDataTypeSealerBanned byte = 0xF3 // reserved
 )
 
-// ExtendedDataSealer is RLP-encoded in Header.Extra[extraVanity+1:len-extraSeal]
-type ExtendedDataSealer struct {
-	Root      common.Hash          // sealers digest
-	CrossLink common.Hash          // cross-link header hash
-	Requests  [][2]*common.Address // []{signer, coinbase}
+func isSealerApplicationBlock(header *types.Header) bool {
+	if len(header.Extra) <= extraVanity+extraSeal {
+		return false
+	}
+	return header.Extra[extraVanity]&0xF0 != 0
 }
 
 // prepare2 implements consensus.Engine, preparing all the consensus fields of the
 // header for running the transactions on top.
 func (d *Dccs) prepare2(chain consensus.ChainReader, header *types.Header) error {
-	header.Nonce = types.BlockNonce{}
-	d.prepareBeneficiary(header, chain)
-
-	// Set the correct difficulty
-	snap, err := d.snapshot1(chain, header, nil)
-	if err != nil {
-		return err
-	}
 	number := header.Number.Uint64()
 	parent := chain.GetHeader(header.ParentHash, number-1)
 	if parent == nil {
 		return consensus.ErrUnknownAncestor
+	}
+
+	header.Nonce = types.BlockNonce{}
+	d.prepareBeneficiary(header, chain)
+
+	// Set the correct difficulty
+	snap, err := d.snapshot1(chain, header, []*types.Header{parent})
+	if err != nil {
+		return err
 	}
 	header.Difficulty = CalcDifficulty1(snap, d.signer, parent)
 	log.Trace("header.Difficulty", "difficulty", header.Difficulty)
@@ -314,28 +327,21 @@ func (d *Dccs) prepare2(chain consensus.ChainReader, header *types.Header) error
 			header.Extra = append(header.Extra, signer.Address[:]...)
 		}
 	} else {
-		requests, err := d.getSealerRequests(parent, chain)
+		applications, err := d.getSealerApplications(parent, chain)
 		if err != nil {
 			log.Error("failed to get changed sealer from log", "parent", parent.Number, "err", err)
 			return err
 		}
-		log.Error("requests", "requests", requests)
-		if len(requests) > 0 {
-			sdata := ExtendedDataSealer{
-				Root:      common.Hash{}, // TODO
-				CrossLink: common.Hash{}, // TODO
-				Requests:  requests,
+		log.Error("sealers", "sealers", applications)
+		for _, app := range applications {
+			if app.action {
+				header.Extra = append(header.Extra, ExtendedDataTypeSealerJoin)
+			} else {
+				header.Extra = append(header.Extra, ExtendedDataTypeSealerLeave)
 			}
-			log.Error("sdata", "sdata", sdata)
-			sbytes, err := rlp.EncodeToBytes(sdata)
-			log.Error("sbytes", "len", len(sbytes), "data", common.Bytes2Hex(sbytes))
-			if err != nil {
-				return err
-			}
-
-			header.Extra = append(header.Extra, ExtendedDataTypeSealer)
-			header.Extra = append(header.Extra, sbytes...)
+			header.Extra = append(header.Extra, app.sealer[:]...)
 		}
+		log.Error("prepare2", "application", common.Bytes2Hex(header.Extra[extraVanity:len(header.Extra)-extraSeal]))
 	}
 
 	header.Extra = append(header.Extra, make([]byte, extraSeal)...)
