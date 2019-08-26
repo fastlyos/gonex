@@ -124,8 +124,9 @@ func (w *wizard) makeGenesis() {
 			ThangLongBlock: common.Big0,
 			ThangLongEpoch: 3000,
 			// CoLoa hardfork
-			CoLoaBlock:   common.Big0,
-			LeakDuration: 1024,
+			CoLoaBlock:              common.Big0,
+			LeakDuration:            1024,
+			ApplicationConfirmation: 128,
 		}
 		fmt.Println()
 		fmt.Println("How many seconds should blocks take? (default = 2)")
@@ -217,6 +218,10 @@ func (w *wizard) makeGenesis() {
 		fmt.Println()
 		fmt.Printf("After how many block of inactivity should a sealer is kicked out? (default = %v)\n", genesis.Config.Dccs.LeakDuration)
 		genesis.Config.Dccs.LeakDuration = uint64(w.readDefaultInt(int(genesis.Config.Dccs.LeakDuration)))
+
+		fmt.Println()
+		fmt.Printf("How many confirmations is required before a sealer application takes effect? (default = %v)\n", genesis.Config.Dccs.ApplicationConfirmation)
+		genesis.Config.Dccs.ApplicationConfirmation = uint64(w.readDefaultInt(int(genesis.Config.Dccs.ApplicationConfirmation)))
 
 	default:
 		log.Crit("Invalid consensus engine choice", "choice", choice)

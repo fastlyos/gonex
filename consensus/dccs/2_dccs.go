@@ -21,9 +21,11 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"sort"
 	"time"
 
 	"github.com/ethereum/go-ethereum/core/rawdb"
+	"github.com/ethereum/go-ethereum/crypto"
 
 	"github.com/ethereum/go-ethereum/eth/filters"
 	"github.com/ethereum/go-ethereum/ethdb"
@@ -46,26 +48,6 @@ var (
 func (d *Dccs) init2() *Dccs {
 	d.init1()
 	return d
-}
-
-// TODO: UNOPTIMIZED
-// getSealers gets the authorized sealers for a block number
-// the list is deterministically sorted by sealer addresses
-func (d *Dccs) getSealers(number uint64, chain consensus.ChainReader, parents []*types.Header) ([]common.Address, error) {
-	found := map[common.Address]struct{}{}
-	list := []common.Address{}
-	for i := d.config.LeakDuration; i > 0; i++ {
-		h := getAvailableHeader(number-i, nil, parents, chain)
-		sealer, err := ecrecover(h, d.signatures)
-		if err != nil {
-			return nil, err
-		}
-		if _, exists := found[sealer]; !exists {
-			found[sealer] = struct{}{}
-			list = append(list, sealer)
-		}
-	}
-	return list, nil
 }
 
 // verifyHeader2 checks whether a header conforms to the consensus rules.The
@@ -99,10 +81,10 @@ func (d *Dccs) verifyHeader2(chain consensus.ChainReader, header *types.Header, 
 	// if checkpoint && signersBytes%common.AddressLength != 0 {
 	// 	return errInvalidCheckpointSigners
 	// }
-	// Ensure that the mix digest is zero as we don't have fork protection currently
-	if header.MixDigest != (common.Hash{}) {
-		return errInvalidMixDigest
-	}
+	// // Ensure that the mix digest is zero as we don't have fork protection currently
+	// if header.MixDigest != (common.Hash{}) {
+	// 	return errInvalidMixDigest
+	// }
 	// Ensure that the block doesn't contain any uncles which are meaningless in PoA
 	if header.UncleHash != uncleHash {
 		return errInvalidUncleHash
@@ -150,9 +132,10 @@ func (d *Dccs) verifyCascadingFields2(chain consensus.ChainReader, header *types
 	if isSealerApplicationBlock(parent) {
 		nonce = types.EncodeNonce(1)
 	} else {
-		nonce = types.EncodeNonce(header.Nonce.Uint64() + 1)
+		nonce = types.EncodeNonce(parent.Nonce.Uint64() + 1)
 	}
 	if header.Nonce != nonce {
+		log.Error("invalid nonce", "expected", nonce, "actual", header.Nonce)
 		return errInvalidNonce
 	}
 
@@ -187,22 +170,38 @@ func (d *Dccs) verifySeal2(chain consensus.ChainReader, header *types.Header, pa
 	if number == 0 {
 		return errUnknownBlock
 	}
-	// Retrieve the snapshot needed to verify this header and cache it
-	snap, err := d.snapshot1(chain, header, parents)
+
+	// Retrieve the authorized sealers list to verify this header (TODO: and cache it)
+	sealers, err := d.getSealers(number, chain, parents, true)
 	if err != nil {
 		return err
 	}
+	// Verify mix digest as sealers digest
+	sealersBytes := serializeSealers(sealers)
+	sealersDigest := crypto.Keccak256Hash(sealersBytes)
+	// Mix digest is record the hash digest of all authorized sealer for this block
+	if header.MixDigest != sealersDigest {
+		log.Error("invalid mix digest as sealers digest", "expected", sealersDigest, "actual", header.MixDigest)
+		return errors.New("invalid mix digest as sealers digest")
+	}
+
+	// Retrieve the snapshot needed to verify this header and cache it
+	// snap, err := d.snapshot1(chain, header, parents)
+	// if err != nil {
+	// 	return err
+	// }
 
 	// Resolve the authorization key and check against signers
 	signer, err := ecrecover(header, d.signatures)
 	if err != nil {
 		return err
 	}
-	if _, ok := snap.Signers[signer]; !ok {
+
+	if !isAuthorized(signer, sealers) {
 		return errUnauthorizedSigner
 	}
 
-	headers, err := d.GetRecentHeaders(snap, chain, header, parents)
+	headers, err := d.GetRecentHeaders(len(sealers)/2, chain, header, parents)
 	if err != nil {
 		return err
 	}
@@ -217,16 +216,16 @@ func (d *Dccs) verifySeal2(chain consensus.ChainReader, header *types.Header, pa
 		}
 	}
 
-	var parent *types.Header
-	if len(headers) > 0 {
-		parent = headers[0]
-	}
+	// var parent *types.Header
+	// if len(headers) > 0 {
+	// 	parent = headers[0]
+	// }
 
 	// Ensure that the difficulty corresponds to the turn-ness of the signer
-	signerDifficulty := snap.difficulty(signer, parent)
-	if header.Difficulty.Uint64() != signerDifficulty {
-		return errInvalidDifficulty
-	}
+	// signerDifficulty := snap.difficulty(signer, parent)
+	// if header.Difficulty.Uint64() != signerDifficulty {
+	// 	return errInvalidDifficulty
+	// }
 	return nil
 }
 
@@ -275,11 +274,163 @@ type sealerApplication struct {
 	action bool // isJoined
 }
 
-// getSealerApplications filters the block for any joining or leaving sealer.
+// A single byte right after extraVanity indicates the DataType, allow multiple
+// structures and/or versions of RLP can be decoded from the extra bytes.
+const (
+	ExtendedDataTypeNone         byte = 0x00
+	ExtendedDataTypeSealerJoin   byte = 0xF0
+	ExtendedDataTypeSealerLeave  byte = 0xF1
+	ExtendedDataTypeSealerLeak   byte = 0xF2 // reserved
+	ExtendedDataTypeSealerBanned byte = 0xF3 // reserved
+)
+
+// consensusRange holds the consensus info for a range of block
+// in a header chain
+// type consensusRange struct {
+// 	hash     common.Hash // hash of the last block hash
+// 	sigCount map[common.Address]int
+// }
+
+func isAuthorized(signer common.Address, sealers []common.Address) bool {
+	for _, sealer := range sealers {
+		if signer == sealer {
+			return true
+		}
+	}
+	return false
+}
+
+func serializeSealers(sealers []common.Address) []byte {
+	buf := make([]byte, len(sealers)*common.AddressLength)
+	for i, sealer := range sealers {
+		copy(buf[i:], sealer[:])
+	}
+	return buf
+}
+
+// TODO: UNOPTIMIZED
+// getSealers gets the authorized sealers for a block number
+// the list is deterministically sorted by sealer addresses
+func (d *Dccs) getSealers(number uint64, chain consensus.ChainReader, parents []*types.Header, sorted bool) ([]common.Address, error) {
+	found := map[common.Address]struct{}{}
+	list := []common.Address{}
+	addSealer := func(sealer common.Address) {
+		if _, exists := found[sealer]; !exists {
+			log.Error("+++", "sealer", sealer)
+			found[sealer] = struct{}{}
+			list = append(list, sealer)
+		}
+	}
+	remSealer := func(sealer common.Address) {
+		if _, exists := found[sealer]; exists {
+			log.Error("+++", "sealer", sealer)
+			delete(found, sealer)
+			for i, s := range list {
+				if s == sealer {
+					list[i] = list[len(list)-1]
+					list = list[:len(list)-1]
+					break
+				}
+			}
+		}
+	}
+	// scan from number-LeakDuration to number-1
+	for i := d.config.LeakDuration; i > 0; i-- {
+		if number <= i {
+			// skip any 'negative' number before genesis block
+			continue
+		}
+		header := getAvailableHeader(number-i, nil, parents, chain)
+		sealer, err := ecrecover(header, d.signatures)
+		if err != nil {
+			return nil, err
+		}
+		addSealer(sealer)
+		log.Error("loop", "i", i, "n", number-i, "nonce", header.Nonce.Uint64())
+		// confirmed application
+		if header.Nonce.Uint64() == d.config.ApplicationConfirmation {
+			if number <= i+d.config.ApplicationConfirmation {
+				log.Error("invalid block nonce as application confirmation", "nonce", header.Nonce.Uint64())
+				return nil, errors.New("invalid block nonce as application confirmation")
+			}
+			var p []*types.Header
+			if int(i) < len(parents) {
+				p = parents[:len(parents)-int(i)]
+			}
+			appHeader := getAvailableHeader(number-i-d.config.ApplicationConfirmation, header, p, chain)
+			if appHeader == nil {
+				log.Error("sealer application block not available", "number", appHeader.Number)
+				return nil, errors.New("sealer application block not available")
+			}
+			if len(appHeader.Extra) <= extraVanity+extraSeal {
+				log.Error("no sealer application data in header extra", "app number", appHeader.Number, "number", number, "i", i)
+				// TODO: edge case for hard-fork block here
+				//return nil, errors.New("no sealer application data in header extra")
+				continue
+			}
+			apps, _ := decodeSealerApplications(appHeader.Extra[extraVanity : len(appHeader.Extra)-extraSeal])
+			for _, app := range apps {
+				if app.action {
+					log.Error("++++++++++++++++++++++++++")
+					addSealer(app.sealer)
+				} else {
+					log.Error("--------------------------")
+					remSealer(app.sealer)
+				}
+			}
+		}
+	}
+	if sorted {
+		sort.Sort(signersAscending(list))
+	}
+	return list, nil
+}
+
+func decodeSealerApplications(buf []byte) ([]sealerApplication, int) {
+	if len(buf) == 0 {
+		return nil, 0
+	}
+	log.Error("decodeSealerApplications", "buf", common.Bytes2Hex(buf))
+	apps := make([]sealerApplication, len(buf)/(common.AddressLength+1))
+	for i := 0; i < len(buf); i += common.AddressLength + 1 {
+		if buf[i]&0xF0 == 0 {
+			// not sealer application
+			return apps, i
+		}
+		var action bool
+		if buf[i] == ExtendedDataTypeSealerJoin {
+			action = true
+		}
+		apps = append(apps, sealerApplication{
+			sealer: common.BytesToAddress(buf[i+1 : i+1+common.AddressLength]),
+			action: action,
+		})
+	}
+	return apps, len(buf)
+}
+
+func encodeSealerApplications(applications []sealerApplication) []byte {
+	if len(applications) == 0 {
+		return nil
+	}
+	log.Error("encodeSealerApplications", "applications", applications)
+	buf := make([]byte, len(applications)*(common.AddressLength+1))
+	for i, app := range applications {
+		if app.action {
+			buf[i*(common.AddressLength+1)] = ExtendedDataTypeSealerJoin
+		} else {
+			buf[i*(common.AddressLength+1)] = ExtendedDataTypeSealerLeave
+		}
+		copy(buf[i*(common.AddressLength+1)+1:], app.sealer[:])
+	}
+	return buf
+}
+
+// fetchSealerApplications filters the block for any joining or leaving sealer.
 // Newly joined sealer is mapped to it's coinbase address, left sealer is mapped to nil.
 // Sealer joining and leaving txs can be confirmed in the same block, and the order of the requests
 // is preserved.
-func (d *Dccs) getSealerApplications(header *types.Header, chain consensus.ChainReader) ([]sealerApplication, error) {
+func (d *Dccs) fetchSealerApplications(header *types.Header, chain consensus.ChainReader) ([]sealerApplication, error) {
 	logs, err := filters.BlockLogs(header,
 		[]common.Address{d.config.Contract},
 		[][]common.Hash{{joinedTopic, leftTopic}},
@@ -316,16 +467,6 @@ func (d *Dccs) getSealerApplications(header *types.Header, chain consensus.Chain
 	return applications, nil
 }
 
-// A single byte right after extraVanity indicates the DataType, allow multiple
-// structures and/or versions of RLP can be decoded from the extra bytes.
-const (
-	ExtendedDataTypeNone         byte = 0x00
-	ExtendedDataTypeSealerJoin   byte = 0xF0
-	ExtendedDataTypeSealerLeave  byte = 0xF1
-	ExtendedDataTypeSealerLeak   byte = 0xF2 // reserved
-	ExtendedDataTypeSealerBanned byte = 0xF3 // reserved
-)
-
 func isSealerApplicationBlock(header *types.Header) bool {
 	if len(header.Extra) <= extraVanity+extraSeal {
 		return false
@@ -346,13 +487,14 @@ func (d *Dccs) prepare2(chain consensus.ChainReader, header *types.Header) error
 	if isSealerApplicationBlock(parent) {
 		header.Nonce = types.EncodeNonce(1)
 	} else {
-		header.Nonce = types.EncodeNonce(header.Nonce.Uint64() + 1)
+		header.Nonce = types.EncodeNonce(parent.Nonce.Uint64() + 1)
 	}
 
 	d.prepareBeneficiary(header, chain)
 
 	// Set the correct difficulty
-	snap, err := d.snapshot1(chain, header, []*types.Header{parent})
+	parents := []*types.Header{parent}
+	snap, err := d.snapshot1(chain, header, parents)
 	if err != nil {
 		return err
 	}
@@ -365,32 +507,33 @@ func (d *Dccs) prepare2(chain consensus.ChainReader, header *types.Header) error
 	}
 	header.Extra = header.Extra[:extraVanity]
 
-	if d.config.IsCheckpoint(number) {
-		for _, signer := range snap.signers1() {
-			header.Extra = append(header.Extra, signer.Address[:]...)
-		}
-	} else {
-		applications, err := d.getSealerApplications(parent, chain)
-		if err != nil {
-			log.Error("failed to get changed sealer from log", "parent", parent.Number, "err", err)
-			return err
-		}
-		log.Error("sealers", "sealers", applications)
-		for _, app := range applications {
-			if app.action {
-				header.Extra = append(header.Extra, ExtendedDataTypeSealerJoin)
-			} else {
-				header.Extra = append(header.Extra, ExtendedDataTypeSealerLeave)
-			}
-			header.Extra = append(header.Extra, app.sealer[:]...)
-		}
-		log.Error("prepare2", "application", common.Bytes2Hex(header.Extra[extraVanity:len(header.Extra)-extraSeal]))
+	// if d.config.IsCheckpoint(number) {
+	// 	for _, signer := range snap.signers1() {
+	// 		header.Extra = append(header.Extra, signer.Address[:]...)
+	// 	}
+	// }
+
+	applications, err := d.fetchSealerApplications(parent, chain)
+	if err != nil {
+		log.Error("failed to get changed sealer from log", "parent", parent.Number, "err", err)
+		return err
 	}
+	log.Error("sealers", "applications", applications)
+	extExtra := encodeSealerApplications(applications)
+	if len(extExtra) > 0 {
+		header.Extra = append(header.Extra, extExtra...)
+	}
+	log.Error("prepare2", "extExtra", common.Bytes2Hex(extExtra))
 
 	header.Extra = append(header.Extra, make([]byte, extraSeal)...)
 
-	// Mix digest is reserved for now, set to empty
-	header.MixDigest = common.Hash{}
+	sealers, err := d.getSealers(number, chain, parents, true)
+	if err != nil {
+		return err
+	}
+	sealersBytes := serializeSealers(sealers)
+	// Mix digest is record the hash digest of all authorized sealer for this block
+	header.MixDigest = crypto.Keccak256Hash(sealersBytes)
 
 	// Ensure the timestamp has the correct delay
 	header.Time = parent.Time + d.config.Period
@@ -449,7 +592,7 @@ func (d *Dccs) seal2(chain consensus.ChainReader, block *types.Block, results ch
 		return errUnauthorizedSigner
 	}
 	// If we're amongst the recent signers, wait for the next block
-	headers, err := d.GetRecentHeaders(snap, chain, header, nil)
+	headers, err := d.GetRecentHeaders(len(snap.Signers)/2, chain, header, nil)
 	if err != nil {
 		return err
 	}
