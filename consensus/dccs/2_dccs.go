@@ -323,7 +323,7 @@ func (d *Dccs) getSealers(number uint64, chain consensus.ChainReader, parents []
 	}
 	remSealer := func(sealer common.Address) {
 		if _, exists := found[sealer]; exists {
-			log.Error("+++", "sealer", sealer)
+			log.Error("---", "sealer", sealer)
 			delete(found, sealer)
 			for i, s := range list {
 				if s == sealer {
@@ -389,20 +389,22 @@ func decodeSealerApplications(buf []byte) ([]sealerApplication, int) {
 		return nil, 0
 	}
 	log.Error("decodeSealerApplications", "buf", common.Bytes2Hex(buf))
-	apps := make([]sealerApplication, len(buf)/(common.AddressLength+1))
-	for i := 0; i < len(buf); i += common.AddressLength + 1 {
-		if buf[i]&0xF0 == 0 {
+	count := len(buf) / (common.AddressLength + 1)
+	apps := make([]sealerApplication, count)
+	for i := 0; i < count; i++ {
+		offset := i * (common.AddressLength + 1)
+		if buf[offset]&0xF0 == 0 {
 			// not sealer application
 			return apps, i
 		}
 		var action bool
-		if buf[i] == ExtendedDataTypeSealerJoin {
+		if buf[offset] == ExtendedDataTypeSealerJoin {
 			action = true
 		}
-		apps = append(apps, sealerApplication{
-			sealer: common.BytesToAddress(buf[i+1 : i+1+common.AddressLength]),
+		apps[i] = sealerApplication{
+			sealer: common.BytesToAddress(buf[offset+1 : offset+1+common.AddressLength]),
 			action: action,
-		})
+	}
 	}
 	return apps, len(buf)
 }
