@@ -364,9 +364,7 @@ func (d *Dccs) getSealers(number uint64, chain consensus.ChainReader, parents []
 			}
 			if len(appHeader.Extra) <= extraVanity+extraSeal {
 				log.Error("no sealer application data in header extra", "app number", appHeader.Number, "number", number, "i", i)
-				// TODO: edge case for hard-fork block here
-				//return nil, errors.New("no sealer application data in header extra")
-				continue
+				return nil, errors.New("no sealer application data in header extra")
 			}
 			apps, _ := decodeSealerApplications(appHeader.Extra[extraVanity : len(appHeader.Extra)-extraSeal])
 			for _, app := range apps {
