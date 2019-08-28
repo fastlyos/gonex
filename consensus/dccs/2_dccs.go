@@ -21,6 +21,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"math/big"
 	"sort"
 	"time"
@@ -87,10 +88,10 @@ func (d *Dccs) verifyHeader2(chain consensus.ChainReader, header *types.Header, 
 	// 	return errInvalidMixDigest
 	// }
 
-	// Ensure that the block doesn't contain any uncles which are meaningless in PoA
-	// if header.UncleHash != uncleHash {
-	// 	return errInvalidUncleHash
-	// }
+	// Ensure that the block doesn't contain any uncles which are meaningless in Dccs
+	if header.UncleHash != types.EmptyUncleHash {
+		return errInvalidUncleHash
+	}
 
 	// Ensure that the block's difficulty is meaningful (may not be correct at this point)
 	if number > 0 {
@@ -149,43 +150,18 @@ func (d *Dccs) verifyCascadingFields2(chain consensus.ChainReader, header *types
 	}
 
 	// verify the cross-link reference to the last sealer application block
+	var expectedMixDigest common.Hash
 	if d.config.CoLoaBlock.Cmp(header.Number) == 0 {
-		if (header.MixDigest != common.Hash{}) {
-			log.Error("invalid cross-link hash at Hardfork", "expected", common.Hash{}, "actual", header.MixDigest, "number", header.Number)
-			return errors.New("invalid cross-link hash (Hardfork)")
-			// return errInvalidUncleHash
-		}
+		expectedMixDigest = common.Hash{}
 	} else if d.isSealerApplicationBlock(parent) {
-		if header.MixDigest != parent.Hash() {
-			log.Error("invalid cross-link hash (post app block)", "expected", parent.Hash(), "actual", header.UncleHash, "number", header.Number)
-			return errors.New("invalid cross-link hash (post app block)")
-			// return errInvalidUncleHash
-		}
+		expectedMixDigest = parent.Hash()
 	} else {
-		if header.MixDigest != parent.MixDigest {
-			log.Error("invalid cross-link hash", "expected", parent.MixDigest, "actual", header.MixDigest, "number", header.Number)
-			return errors.New("invalid cross-link hash")
-			// return errInvalidUncleHash
-		}
+		expectedMixDigest = parent.MixDigest
+	}
+	if header.MixDigest != expectedMixDigest {
+		return fmt.Errorf("invalid cross-link digest: number=%v, want=%v, have=%v", header.Number, expectedMixDigest, header.MixDigest)
 	}
 
-	// TODO
-	// // Retrieve the snapshot needed to verify this header and cache it
-	// snap, err := d.snapshot1(chain, header, parents)
-	// if err != nil {
-	// 	return err
-	// }
-	// // If the block is a checkpoint block, verify the signer list
-	// if d.config.IsCheckpoint(number) {
-	// 	signers := make([]byte, len(snap.Signers)*common.AddressLength)
-	// 	for i, signer := range snap.signers1() {
-	// 		copy(signers[i*common.AddressLength:], signer.Address[:])
-	// 	}
-	// 	extraSuffix := len(header.Extra) - extraSeal
-	// 	if !bytes.Equal(header.Extra[extraVanity:extraSuffix], signers) {
-	// 		return errInvalidCheckpointSigners
-	// 	}
-	// }
 	// All basic checks passed, verify the seal and return
 	return d.verifySeal2(chain, header, parents)
 }
@@ -214,12 +190,6 @@ func (d *Dccs) verifySeal2(chain consensus.ChainReader, header *types.Header, pa
 	// 	return errors.New("invalid mix digest as sealers digest")
 	// }
 
-	// Retrieve the snapshot needed to verify this header and cache it
-	// snap, err := d.snapshot1(chain, header, parents)
-	// if err != nil {
-	// 	return err
-	// }
-
 	// Resolve the authorization key and check against signers
 	signer, err := ecrecover(header, d.signatures)
 	if err != nil {
@@ -230,6 +200,7 @@ func (d *Dccs) verifySeal2(chain consensus.ChainReader, header *types.Header, pa
 		return errUnauthorizedSigner
 	}
 
+	// TODO: no epoch for recent check
 	headers, err := d.GetRecentHeaders(len(sealers)/2, chain, header, parents)
 	if err != nil {
 		return err
@@ -244,6 +215,8 @@ func (d *Dccs) verifySeal2(chain consensus.ChainReader, header *types.Header, pa
 			return errRecentlySigned
 		}
 	}
+
+	// TODO: verify extExtra here
 
 	// var parent *types.Header
 	// if len(headers) > 0 {
@@ -297,28 +270,6 @@ var joinedTopic = common.HexToHash("7702dccda75540ad1dca8d5276c048f4a5c0e4203f6d
 
 // Keccak256("Left(address,address)")
 var leftTopic = common.HexToHash("4b9ee4dd061ba088b22898a02491f3896a4a580c6cda8783ca579ee159f8e8c5")
-
-type sealerApplication struct {
-	sealer common.Address
-	action bool // isJoined
-}
-
-// A single byte right after extraVanity indicates the DataType, allow multiple
-// structures and/or versions of RLP can be decoded from the extra bytes.
-const (
-	ExtendedDataTypeNone         byte = 0x00
-	ExtendedDataTypeSealerJoin   byte = 0xF0
-	ExtendedDataTypeSealerLeave  byte = 0xF1
-	ExtendedDataTypeSealerLeak   byte = 0xF2 // reserved
-	ExtendedDataTypeSealerBanned byte = 0xF3 // reserved
-)
-
-// consensusRange holds the consensus info for a range of block
-// in a header chain
-// type consensusRange struct {
-// 	hash     common.Hash // hash of the last block hash
-// 	sigCount map[common.Address]int
-// }
 
 func isAuthorized(signer common.Address, sealers []common.Address) bool {
 	for _, sealer := range sealers {
@@ -390,6 +341,10 @@ func (d *Dccs) getSealers(number uint64, chain consensus.ChainReader, parents []
 			continue
 		}
 		header := getAvailableHeader(number-i, nil, parents, chain)
+		if header == nil {
+			log.Error("getSealers: getAvailableHeader returns nil", "number", number, "i", i, "len(parents)", len(parents))
+			return nil, errUnknownBlock
+		}
 		sealer, err := ecrecover(header, d.signatures)
 		if err != nil {
 			return nil, err
@@ -414,9 +369,12 @@ func (d *Dccs) getSealers(number uint64, chain consensus.ChainReader, parents []
 			log.Error("no sealer application data in header extra", "app number", appHeader.Number, "number", number)
 			return nil, errors.New("no sealer application data in header extra")
 		}
-		apps, _ := decodeSealerApplications(appHeader.Extra[extraVanity : len(appHeader.Extra)-extraSeal])
-		if len(apps) > 0 {
-			allApps = append(apps, allApps...)
+		extExtra, err := bytesToExtExtra(appHeader.Extra[extraVanity : len(appHeader.Extra)-extraSeal])
+		if err != nil {
+			return nil, err
+		}
+		if len(extExtra.applications) > 0 {
+			allApps = append(extExtra.applications, allApps...)
 		}
 	}
 	for _, app := range allApps {
@@ -433,48 +391,6 @@ func (d *Dccs) getSealers(number uint64, chain consensus.ChainReader, parents []
 	}
 	log.Error("getSealers", "sealers", list)
 	return list, nil
-}
-
-func decodeSealerApplications(buf []byte) ([]sealerApplication, int) {
-	if len(buf) == 0 {
-		return nil, 0
-	}
-	log.Error("decodeSealerApplications", "buf", common.Bytes2Hex(buf))
-	count := len(buf) / (common.AddressLength + 1)
-	apps := make([]sealerApplication, count)
-	for i := 0; i < count; i++ {
-		offset := i * (common.AddressLength + 1)
-		if buf[offset]&0xF0 == 0 {
-			// not sealer application
-			return apps, i
-		}
-		var action bool
-		if buf[offset] == ExtendedDataTypeSealerJoin {
-			action = true
-		}
-		apps[i] = sealerApplication{
-			sealer: common.BytesToAddress(buf[offset+1 : offset+1+common.AddressLength]),
-			action: action,
-		}
-	}
-	return apps, len(buf)
-}
-
-func encodeSealerApplications(applications []sealerApplication) []byte {
-	if len(applications) == 0 {
-		return nil
-	}
-	log.Error("encodeSealerApplications", "applications", applications)
-	buf := make([]byte, len(applications)*(common.AddressLength+1))
-	for i, app := range applications {
-		if app.action {
-			buf[i*(common.AddressLength+1)] = ExtendedDataTypeSealerJoin
-		} else {
-			buf[i*(common.AddressLength+1)] = ExtendedDataTypeSealerLeave
-		}
-		copy(buf[i*(common.AddressLength+1)+1:], app.sealer[:])
-	}
-	return buf
 }
 
 // fetchSealerApplications filters the block for any joining or leaving sealer.
@@ -525,7 +441,7 @@ func (d *Dccs) isSealerApplicationBlock(header *types.Header) bool {
 	if len(header.Extra) <= extraVanity+extraSeal {
 		return false
 	}
-	return header.Extra[extraVanity]&0xF0 != 0
+	return header.Extra[extraVanity]&0xF0 == 0xF0
 }
 
 // prepare2 implements consensus.Engine, preparing all the consensus fields of the
@@ -551,12 +467,6 @@ func (d *Dccs) prepare2(chain consensus.ChainReader, header *types.Header) error
 		header.MixDigest = parent.MixDigest
 	}
 
-	// Ensure the extra data has all it's components
-	if len(header.Extra) < extraVanity {
-		header.Extra = append(header.Extra, bytes.Repeat([]byte{0x00}, extraVanity-len(header.Extra))...)
-	}
-	header.Extra = header.Extra[:extraVanity]
-
 	sealers, err := d.getSealers(number, chain, nil, true)
 	if err != nil {
 		return err
@@ -568,17 +478,27 @@ func (d *Dccs) prepare2(chain consensus.ChainReader, header *types.Header) error
 	difficulty := d.difficulty2(d.signer, header.ParentHash, sealers, chain.GetHeaderByHash)
 	header.Difficulty = new(big.Int).SetUint64(difficulty)
 
+	// Ensure the extra data has all it's components
+	if len(header.Extra) < extraVanity {
+		header.Extra = append(header.Extra, bytes.Repeat([]byte{0x00}, extraVanity-len(header.Extra))...)
+	}
+	header.Extra = header.Extra[:extraVanity]
+
 	applications, err := d.fetchSealerApplications(parent, chain)
 	if err != nil {
 		log.Error("failed to get changed sealer from log", "parent", parent.Number, "err", err)
 		return err
 	}
-	log.Error("sealers", "applications", applications)
-	extExtra := encodeSealerApplications(applications)
-	if len(extExtra) > 0 {
-		header.Extra = append(header.Extra, extExtra...)
+	if len(applications) > 0 {
+		log.Error("sealers", "applications", applications)
+		digest := types.RLPHash(sealers)
+		extExtra := extExtra{
+			sealersDigest: &digest,
+			applications:  applications,
+		}
+		header.Extra = append(header.Extra, extExtra.Bytes()...)
+		log.Error("prepare2", "extExtra", extExtra)
 	}
-	log.Error("prepare2", "extExtra", common.Bytes2Hex(extExtra))
 
 	header.Extra = append(header.Extra, make([]byte, extraSeal)...)
 
