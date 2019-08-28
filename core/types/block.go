@@ -130,6 +130,10 @@ func (h *Header) SanityCheck() error {
 	return nil
 }
 
+func RLPHash(x interface{}) common.Hash {
+	return rlpHash(x)
+}
+
 func rlpHash(x interface{}) (h common.Hash) {
 	hw := sha3.NewLegacyKeccak256()
 	rlp.Encode(hw, x)

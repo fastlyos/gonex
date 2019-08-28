@@ -21,11 +21,11 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"math/big"
 	"sort"
 	"time"
 
 	"github.com/ethereum/go-ethereum/core/rawdb"
-	"github.com/ethereum/go-ethereum/crypto"
 
 	"github.com/ethereum/go-ethereum/eth/filters"
 	"github.com/ethereum/go-ethereum/ethdb"
@@ -41,7 +41,8 @@ import (
 )
 
 var (
-	errInvalidNonce = errors.New("Invalid block nonce as distant from the last sealer application block")
+	errInvalidNonce          = errors.New("Invalid block nonce as distant from the last sealer application block")
+	errUnknownPreviousSealer = errors.New("Unknown previous block sealer")
 )
 
 // Init the second hardfork of DCCS consensus
@@ -85,10 +86,12 @@ func (d *Dccs) verifyHeader2(chain consensus.ChainReader, header *types.Header, 
 	// if header.MixDigest != (common.Hash{}) {
 	// 	return errInvalidMixDigest
 	// }
+
 	// Ensure that the block doesn't contain any uncles which are meaningless in PoA
-	if header.UncleHash != uncleHash {
-		return errInvalidUncleHash
-	}
+	// if header.UncleHash != uncleHash {
+	// 	return errInvalidUncleHash
+	// }
+
 	// Ensure that the block's difficulty is meaningful (may not be correct at this point)
 	if number > 0 {
 		if header.Difficulty == nil {
@@ -101,6 +104,17 @@ func (d *Dccs) verifyHeader2(chain consensus.ChainReader, header *types.Header, 
 	}
 	// All basic checks passed, verify cascading fields
 	return d.verifyCascadingFields2(chain, header, parents)
+}
+
+func (d *Dccs) getBlockNonce(number *big.Int, parent *types.Header) types.BlockNonce {
+	return types.BlockNonce{}
+	// if d.config.CoLoaBlock.Cmp(number) == 0 {
+	// 	return types.BlockNonce{}
+	// } else if isSealerApplicationBlock(parent) {
+	// 	return types.EncodeNonce(1)
+	// } else {
+	// 	return types.EncodeNonce(parent.Nonce.Uint64() + 1)
+	// }
 }
 
 // verifyCascadingFields2 verifies all the header fields that are not standalone,
@@ -128,15 +142,31 @@ func (d *Dccs) verifyCascadingFields2(chain consensus.ChainReader, header *types
 	}
 
 	// verify the distant from the last sealer application block
-	var nonce types.BlockNonce
-	if isSealerApplicationBlock(parent) {
-		nonce = types.EncodeNonce(1)
-	} else {
-		nonce = types.EncodeNonce(parent.Nonce.Uint64() + 1)
-	}
+	nonce := d.getBlockNonce(header.Number, parent)
 	if header.Nonce != nonce {
 		log.Error("invalid nonce", "expected", nonce, "actual", header.Nonce)
 		return errInvalidNonce
+	}
+
+	// verify the cross-link reference to the last sealer application block
+	if d.config.CoLoaBlock.Cmp(header.Number) == 0 {
+		if (header.MixDigest != common.Hash{}) {
+			log.Error("invalid cross-link hash at Hardfork", "expected", common.Hash{}, "actual", header.MixDigest, "number", header.Number)
+			return errors.New("invalid cross-link hash (Hardfork)")
+			// return errInvalidUncleHash
+		}
+	} else if d.isSealerApplicationBlock(parent) {
+		if header.MixDigest != parent.Hash() {
+			log.Error("invalid cross-link hash (post app block)", "expected", parent.Hash(), "actual", header.UncleHash, "number", header.Number)
+			return errors.New("invalid cross-link hash (post app block)")
+			// return errInvalidUncleHash
+		}
+	} else {
+		if header.MixDigest != parent.MixDigest {
+			log.Error("invalid cross-link hash", "expected", parent.MixDigest, "actual", header.MixDigest, "number", header.Number)
+			return errors.New("invalid cross-link hash")
+			// return errInvalidUncleHash
+		}
 	}
 
 	// TODO
@@ -176,14 +206,13 @@ func (d *Dccs) verifySeal2(chain consensus.ChainReader, header *types.Header, pa
 	if err != nil {
 		return err
 	}
-	// Verify mix digest as sealers digest
-	sealersBytes := serializeSealers(sealers)
-	sealersDigest := crypto.Keccak256Hash(sealersBytes)
-	// Mix digest is record the hash digest of all authorized sealer for this block
-	if header.MixDigest != sealersDigest {
-		log.Error("invalid mix digest as sealers digest", "expected", sealersDigest, "actual", header.MixDigest)
-		return errors.New("invalid mix digest as sealers digest")
-	}
+	// // Verify mix digest as sealers digest
+	// sealersDigest := types.RLPHash(sealers)
+	// // Mix digest is record the hash digest of all authorized sealer for this block
+	// if header.MixDigest != sealersDigest {
+	// 	log.Error("invalid mix digest as sealers digest", "expected", sealersDigest, "actual", header.MixDigest)
+	// 	return errors.New("invalid mix digest as sealers digest")
+	// }
 
 	// Retrieve the snapshot needed to verify this header and cache it
 	// snap, err := d.snapshot1(chain, header, parents)
@@ -308,10 +337,30 @@ func serializeSealers(sealers []common.Address) []byte {
 	return buf
 }
 
+// getAvailableHeaderByHash returns either:
+// + the input header, if hash == header.Hash()
+// + chain.GetHeaderByHash(hash) if available
+// + the header in parents if available (nessesary for batch headers processing)
+func getAvailableHeaderByHash(hash common.Hash, header *types.Header, parents []*types.Header, chain consensus.ChainReader) *types.Header {
+	if header != nil && header.Hash() == hash {
+		return header
+	}
+	if h := chain.GetHeaderByHash(hash); h != nil {
+		return h
+	}
+	for _, parent := range parents {
+		if parent.Hash() == hash {
+			return parent
+		}
+	}
+	return nil
+}
+
 // TODO: UNOPTIMIZED
 // getSealers gets the authorized sealers for a block number
 // the list is deterministically sorted by sealer addresses
 func (d *Dccs) getSealers(number uint64, chain consensus.ChainReader, parents []*types.Header, sorted bool) ([]common.Address, error) {
+	log.Error("getSealers", "number", number)
 	found := map[common.Address]struct{}{}
 	list := []common.Address{}
 	addSealer := func(sealer common.Address) {
@@ -337,7 +386,7 @@ func (d *Dccs) getSealers(number uint64, chain consensus.ChainReader, parents []
 	// scan from number-LeakDuration to number-1
 	for i := d.config.LeakDuration; i > 0; i-- {
 		if number <= i {
-			// skip any 'negative' number before genesis block
+			// only process after the genesis
 			continue
 		}
 		header := getAvailableHeader(number-i, nil, parents, chain)
@@ -346,41 +395,43 @@ func (d *Dccs) getSealers(number uint64, chain consensus.ChainReader, parents []
 			return nil, err
 		}
 		addSealer(sealer)
-		log.Error("loop", "i", i, "n", number-i, "nonce", header.Nonce.Uint64())
-		// confirmed application
-		if header.Nonce.Uint64() == d.config.ApplicationConfirmation {
-			if number <= i+d.config.ApplicationConfirmation {
-				log.Error("invalid block nonce as application confirmation", "nonce", header.Nonce.Uint64())
-				return nil, errors.New("invalid block nonce as application confirmation")
-			}
-			var p []*types.Header
-			if int(i) < len(parents) {
-				p = parents[:len(parents)-int(i)]
-			}
-			appHeader := getAvailableHeader(number-i-d.config.ApplicationConfirmation, header, p, chain)
-			if appHeader == nil {
-				log.Error("sealer application block not available", "number", appHeader.Number)
-				return nil, errors.New("sealer application block not available")
-			}
-			if len(appHeader.Extra) <= extraVanity+extraSeal {
-				log.Error("no sealer application data in header extra", "app number", appHeader.Number, "number", number, "i", i)
-				return nil, errors.New("no sealer application data in header extra")
-			}
-			apps, _ := decodeSealerApplications(appHeader.Extra[extraVanity : len(appHeader.Extra)-extraSeal])
-			for _, app := range apps {
-				if app.action {
-					log.Error("++++++++++++++++++++++++++")
-					addSealer(app.sealer)
-				} else {
-					log.Error("--------------------------")
-					remSealer(app.sealer)
-				}
-			}
+	}
+	// crawl back the sealer applications
+	parent := getAvailableHeader(number-1, nil, parents, chain)
+	if parent == nil {
+		return nil, errUnknownBlock
+	}
+	allApps := []sealerApplication{}
+	for appHeader := getAvailableHeaderByHash(parent.MixDigest, nil, parents, chain); appHeader != nil; appHeader = getAvailableHeaderByHash(appHeader.MixDigest, nil, parents, chain) {
+		log.Error("crawling", "appNumber", appHeader.Number, "appNumber.Hash", appHeader.Hash(), "cross-link", appHeader.MixDigest)
+		if (appHeader.MixDigest == common.Hash{}) {
+			break
+		}
+		if appHeader.Number.Uint64()+d.config.LeakDuration+d.config.ApplicationConfirmation < number {
+			break
+		}
+		if len(appHeader.Extra) <= extraVanity+extraSeal {
+			log.Error("no sealer application data in header extra", "app number", appHeader.Number, "number", number)
+			return nil, errors.New("no sealer application data in header extra")
+		}
+		apps, _ := decodeSealerApplications(appHeader.Extra[extraVanity : len(appHeader.Extra)-extraSeal])
+		if len(apps) > 0 {
+			allApps = append(apps, allApps...)
+		}
+	}
+	for _, app := range allApps {
+		if app.action {
+			log.Error("++++++++++", "sealer", app.sealer)
+			addSealer(app.sealer)
+		} else {
+			log.Error("----------", "sealer", app.sealer)
+			remSealer(app.sealer)
 		}
 	}
 	if sorted {
 		sort.Sort(signersAscending(list))
 	}
+	log.Error("getSealers", "sealers", list)
 	return list, nil
 }
 
@@ -404,7 +455,7 @@ func decodeSealerApplications(buf []byte) ([]sealerApplication, int) {
 		apps[i] = sealerApplication{
 			sealer: common.BytesToAddress(buf[offset+1 : offset+1+common.AddressLength]),
 			action: action,
-	}
+		}
 	}
 	return apps, len(buf)
 }
@@ -467,7 +518,10 @@ func (d *Dccs) fetchSealerApplications(header *types.Header, chain consensus.Cha
 	return applications, nil
 }
 
-func isSealerApplicationBlock(header *types.Header) bool {
+func (d *Dccs) isSealerApplicationBlock(header *types.Header) bool {
+	if d.config.CoLoaBlock.Cmp(header.Number) == 0 {
+		return true
+	}
 	if len(header.Extra) <= extraVanity+extraSeal {
 		return false
 	}
@@ -484,22 +538,18 @@ func (d *Dccs) prepare2(chain consensus.ChainReader, header *types.Header) error
 	}
 
 	// record the distant from the last sealer application block
-	if isSealerApplicationBlock(parent) {
-		header.Nonce = types.EncodeNonce(1)
-	} else {
-		header.Nonce = types.EncodeNonce(parent.Nonce.Uint64() + 1)
-	}
+	header.Nonce = d.getBlockNonce(header.Number, parent)
 
 	d.prepareBeneficiary(header, chain)
 
-	// Set the correct difficulty
-	parents := []*types.Header{parent}
-	snap, err := d.snapshot1(chain, header, parents)
-	if err != nil {
-		return err
+	// set the cross-link reference to the last sealer application block
+	if d.config.CoLoaBlock.Cmp(header.Number) == 0 {
+		header.MixDigest = common.Hash{}
+	} else if d.isSealerApplicationBlock(parent) {
+		header.MixDigest = parent.Hash()
+	} else {
+		header.MixDigest = parent.MixDigest
 	}
-	header.Difficulty = CalcDifficulty1(snap, d.signer, parent)
-	log.Trace("header.Difficulty", "difficulty", header.Difficulty)
 
 	// Ensure the extra data has all it's components
 	if len(header.Extra) < extraVanity {
@@ -507,11 +557,16 @@ func (d *Dccs) prepare2(chain consensus.ChainReader, header *types.Header) error
 	}
 	header.Extra = header.Extra[:extraVanity]
 
-	// if d.config.IsCheckpoint(number) {
-	// 	for _, signer := range snap.signers1() {
-	// 		header.Extra = append(header.Extra, signer.Address[:]...)
-	// 	}
-	// }
+	sealers, err := d.getSealers(number, chain, nil, true)
+	if err != nil {
+		return err
+	}
+	// // Mix digest is record the hash digest of all authorized sealer for this block
+	// header.MixDigest = types.RLPHash(sealers)
+
+	// Set the correct difficulty
+	difficulty := d.difficulty2(d.signer, header.ParentHash, sealers, chain.GetHeaderByHash)
+	header.Difficulty = new(big.Int).SetUint64(difficulty)
 
 	applications, err := d.fetchSealerApplications(parent, chain)
 	if err != nil {
@@ -527,14 +582,6 @@ func (d *Dccs) prepare2(chain consensus.ChainReader, header *types.Header) error
 
 	header.Extra = append(header.Extra, make([]byte, extraSeal)...)
 
-	sealers, err := d.getSealers(number, chain, parents, true)
-	if err != nil {
-		return err
-	}
-	sealersBytes := serializeSealers(sealers)
-	// Mix digest is record the hash digest of all authorized sealer for this block
-	header.MixDigest = crypto.Keccak256Hash(sealersBytes)
-
 	// Ensure the timestamp has the correct delay
 	header.Time = parent.Time + d.config.Period
 	if header.Time < uint64(time.Now().Unix()) {
@@ -549,16 +596,16 @@ func (d *Dccs) finalize2(chain consensus.ChainReader, header *types.Header, stat
 	// Calculate any block reward for the sealer and commit the final state root
 	d.calculateRewards(chain, state, header)
 	header.Root = state.IntermediateRoot(chain.Config().IsEIP158(header.Number))
-	header.UncleHash = types.CalcUncleHash(nil)
+	header.UncleHash = types.EmptyUncleHash
 }
 
 // finalizeAndAssemble2 implements consensus.Engine, ensuring no uncles are set, nor block
 // rewards given, and returns the final block.
-func (d *Dccs) finalizeAndAssemble2(chain consensus.ChainReader, header *types.Header, state *state.StateDB, txs []*types.Transaction, uncles []*types.Header, receipts []*types.Receipt) (*types.Block, error) {
+func (d *Dccs) finalizeAndAssemble2(chain consensus.ChainReader, header *types.Header, state *state.StateDB, txs []*types.Transaction, uncles []*types.Header, receipts []*types.Receipt) (block *types.Block, err error) {
 	// Calculate any block reward for the sealer and commit the final state root
 	d.calculateRewards(chain, state, header)
 	header.Root = state.IntermediateRoot(chain.Config().IsEIP158(header.Number))
-	header.UncleHash = types.CalcUncleHash(nil)
+	header.UncleHash = types.EmptyUncleHash
 
 	// Assemble and return the final block for sealing
 	return types.NewBlock(header, txs, nil, receipts), nil
@@ -583,16 +630,22 @@ func (d *Dccs) seal2(chain consensus.ChainReader, block *types.Block, results ch
 	signer, signFn := d.signer, d.signFn
 	d.lock.RUnlock()
 
-	// Bail out if we're unauthorized to sign a block
-	snap, err := d.snapshot1(chain, header, nil)
+	// // Bail out if we're unauthorized to sign a block
+	// snap, err := d.snapshot1(chain, header, nil)
+	// if err != nil {
+	// 	return err
+	// }
+
+	sealers, err := d.getSealers(number, chain, nil, true)
 	if err != nil {
 		return err
 	}
-	if _, authorized := snap.Signers[signer]; !authorized {
+
+	if _, authorized := signerPosition2(signer, sealers); !authorized {
 		return errUnauthorizedSigner
 	}
 	// If we're amongst the recent signers, wait for the next block
-	headers, err := d.GetRecentHeaders(len(snap.Signers)/2, chain, header, nil)
+	headers, err := d.GetRecentHeaders(len(sealers)/2, chain, header, nil)
 	if err != nil {
 		return err
 	}
@@ -607,18 +660,15 @@ func (d *Dccs) seal2(chain consensus.ChainReader, block *types.Block, results ch
 			return nil
 		}
 	}
-	var parent *types.Header
-	if len(headers) > 0 {
-		parent = headers[0]
-	}
 	// Sweet, the protocol permits us to sign the block, wait for our time
 	delay := time.Unix(int64(header.Time), 0).Sub(time.Now()) // nolint: gosimple
-	if !snap.inturn1(signer, parent) {
+	// Find the signer offset
+	offset, err := d.offset2(signer, header.ParentHash, sealers, chain.GetHeaderByHash)
+	if err != nil {
+		return err
+	}
+	if !d.inturn2(offset) {
 		// It's not our turn explicitly to sign, delay it a bit
-		offset, err := snap.offset(signer, parent)
-		if err != nil {
-			return err
-		}
 		wiggle := d.calcDelayTimeForOffset(offset)
 		delay += wiggle
 		log.Trace("Out-of-turn signing requested", "wiggle", common.PrettyDuration(wiggle))
@@ -646,4 +696,83 @@ func (d *Dccs) seal2(chain consensus.ChainReader, block *types.Block, results ch
 	}()
 
 	return nil
+}
+
+// inturn2 returns if a signer at a given block height is in-turn or not.
+func (d *Dccs) inturn2(offset int) bool {
+	return offset == 0
+}
+
+func signerPosition2(signer common.Address, signers []common.Address) (int, bool) {
+	for i, sig := range signers {
+		if sig == signer {
+			return i, true
+		}
+	}
+	return -1, false
+}
+
+func (d *Dccs) offset2(signer common.Address, parentHash common.Hash, signers []common.Address, getHeaderByHash func(common.Hash) *types.Header) (int, error) {
+	n := len(signers)
+	if n <= 1 {
+		// no competition
+		return 0, nil
+	}
+
+	pos, ok := signerPosition2(signer, signers)
+	if !ok {
+		// unable to find the signer position
+		log.Error("eee", "signer", signer, "sealers", signers)
+		return n, errUnauthorizedSigner
+	}
+
+	prevPos, err := func() (int, error) {
+		for {
+			parent := getHeaderByHash(parentHash)
+			if parent == nil {
+				return 0, errUnknownPreviousSealer
+			}
+			// Resolve the last authorization key and check against signer
+			prevSigner, err := ecrecover(parent, d.signatures)
+			if err != nil {
+				return 0, err
+			}
+			prevPos, ok := signerPosition2(prevSigner, signers)
+			if ok {
+				// previous signer position found
+				return prevPos, nil
+			}
+			// previous signer could just left the syndicate
+			parentHash = parent.ParentHash
+		}
+	}()
+	if err != nil {
+		return 0, nil
+	}
+
+	offset := pos - prevPos - 1
+	if offset < 0 {
+		offset += n
+	}
+
+	log.Debug("offset", "signer position", pos, "previous signer position", prevPos, "len(signers)", n, "offset", offset)
+
+	return offset, nil
+}
+
+// difficulty2 returns the block weight at a given block height for a signer.
+// Turn-ness is the directional distant from a signer to the previous one,
+// following a circular order of the signers list.
+// @return maximum value = len(signers) if signer is right after the prevSigner (circularly)
+// @return minimum value = 1 if the signer is right before the prevSigner (circularly)
+// @return invalid value = 0 if the signer or parent signer is not on the sealer list
+func (d *Dccs) difficulty2(signer common.Address, parentHash common.Hash, signers []common.Address, getHeaderByHash func(common.Hash) *types.Header) uint64 {
+	offset, err := d.offset2(signer, parentHash, signers, getHeaderByHash)
+	if err != nil {
+		return 0
+	}
+
+	n := len(signers)
+
+	return uint64(n - offset)
 }
