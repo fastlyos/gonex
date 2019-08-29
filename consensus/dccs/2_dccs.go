@@ -81,10 +81,11 @@ func (d *Dccs) verifyHeader2(chain consensus.ChainReader, header *types.Header, 
 	// 	return errInvalidMixDigest
 	// }
 
-	// Ensure that the block doesn't contain any uncles which are meaningless in Dccs
-	if header.UncleHash != types.EmptyUncleHash {
-		return errInvalidUncleHash
-	}
+	// Don't verify the UncleHash to allow possible velvet upgrade later
+	// // Ensure that the block doesn't contain any uncles which are meaningless in Dccs
+	// if header.UncleHash != types.EmptyUncleHash {
+	// 	return errInvalidUncleHash
+	// }
 
 	// Ensure that the block's difficulty is meaningful (may not be correct at this point)
 	if number > 0 {
