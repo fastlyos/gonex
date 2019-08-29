@@ -79,19 +79,6 @@ func (d *Dccs) verifyHeader2(chain consensus.ChainReader, header *types.Header, 
 	if len(header.Extra) < extraVanity+extraSeal {
 		return errMissingSignature
 	}
-	// Ensure that the extra-data contains a signer list on checkpoint, but none otherwise
-	// checkpoint := d.config.IsCheckpoint(number)
-	// signersBytes := len(header.Extra) - extraVanity - extraSeal
-	// if !checkpoint && signersBytes != 0 {
-	// 	return errExtraSigners
-	// }
-	// if checkpoint && signersBytes%common.AddressLength != 0 {
-	// 	return errInvalidCheckpointSigners
-	// }
-	// // Ensure that the mix digest is zero as we don't have fork protection currently
-	// if header.MixDigest != (common.Hash{}) {
-	// 	return errInvalidMixDigest
-	// }
 
 	// Don't verify the UncleHash to allow possible velvet upgrade later
 	// // Ensure that the block doesn't contain any uncles which are meaningless in Dccs
@@ -255,16 +242,13 @@ func (d *Dccs) verifySeal2(chain consensus.ChainReader, header *types.Header, pa
 		return errRecentlySigned
 	}
 
-	// var parent *types.Header
-	// if len(headers) > 0 {
-	// 	parent = headers[0]
-	// }
-
 	// Ensure that the difficulty corresponds to the turn-ness of the signer
-	// signerDifficulty := snap.difficulty(signer, parent)
-	// if header.Difficulty.Uint64() != signerDifficulty {
-	// 	return errInvalidDifficulty
-	// }
+	signerDifficulty := queue.difficulty(signer, func(hash common.Hash) *types.Header {
+		return getAvailableHeaderByHash(hash, header, parents, chain)
+	}, d.signatures)
+	if header.Difficulty.Uint64() != signerDifficulty {
+		return errInvalidDifficulty
+	}
 	return nil
 }
 
