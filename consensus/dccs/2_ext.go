@@ -72,48 +72,6 @@ type sealerApplication struct {
 	action bool // isJoined
 }
 
-// func decodeSealerApplications(buf []byte) ([]sealerApplication, int) {
-// 	if len(buf) == 0 {
-// 		return nil, 0
-// 	}
-// 	log.Error("decodeSealerApplications", "buf", common.Bytes2Hex(buf))
-// 	count := len(buf) / (common.AddressLength + 1)
-// 	apps := make([]sealerApplication, count)
-// 	for i := 0; i < count; i++ {
-// 		offset := i * (common.AddressLength + 1)
-// 		if buf[offset]&0xF0 == 0 {
-// 			// not sealer application
-// 			return apps, i
-// 		}
-// 		var action bool
-// 		if buf[offset] == ExtendedDataTypeSealerJoin {
-// 			action = true
-// 		}
-// 		apps[i] = sealerApplication{
-// 			sealer: common.BytesToAddress(buf[offset+1 : offset+1+common.AddressLength]),
-// 			action: action,
-// 		}
-// 	}
-// 	return apps, len(buf)
-// }
-
-// func encodeSealerApplications(applications []sealerApplication) []byte {
-// 	if len(applications) == 0 {
-// 		return nil
-// 	}
-// 	log.Error("encodeSealerApplications", "applications", applications)
-// 	buf := make([]byte, len(applications)*(common.AddressLength+1))
-// 	for i, app := range applications {
-// 		if app.action {
-// 			buf[i*(common.AddressLength+1)] = ExtendedDataTypeSealerJoin
-// 		} else {
-// 			buf[i*(common.AddressLength+1)] = ExtendedDataTypeSealerLeave
-// 		}
-// 		copy(buf[i*(common.AddressLength+1)+1:], app.sealer[:])
-// 	}
-// 	return buf
-// }
-
 func (e *extExtra) Bytes() []byte {
 	size := len(e.applications) * (1 + common.AddressLength) // sealer applications
 	if e.majorityLink != nil {

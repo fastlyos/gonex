@@ -145,6 +145,8 @@ type Dccs struct {
 	signer common.Address // Ethereum address of the signing key
 	signFn SignerFn       // Signer function to authorize hashes with
 	lock   sync.RWMutex   // Protects the signer fields
+
+	sealingQueueCache *lru.ARCCache // SealingQueue of recent blocks
 }
 
 // New creates a Dccs proof-of-foundation consensus engine with the initial
