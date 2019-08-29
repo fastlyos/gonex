@@ -394,9 +394,8 @@ func (d *Dccs) getSealers(number uint64, chain consensus.ChainReader, parents []
 }
 
 // fetchSealerApplications filters the block for any joining or leaving sealer.
-// Newly joined sealer is mapped to it's coinbase address, left sealer is mapped to nil.
-// Sealer joining and leaving txs can be confirmed in the same block, and the order of the requests
-// is preserved.
+// Multiple sealer applications can be confirmed in the same block, the order of
+// the requests kept as is.
 func (d *Dccs) fetchSealerApplications(header *types.Header, chain consensus.ChainReader) ([]sealerApplication, error) {
 	logs, err := filters.BlockLogs(header,
 		[]common.Address{d.config.Contract},
