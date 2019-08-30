@@ -18,6 +18,7 @@
 package dccs
 
 import (
+	"bytes"
 	"errors"
 	"sort"
 	"sync"
@@ -27,11 +28,13 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/log"
 	lru "github.com/hashicorp/golang-lru"
+	"golang.org/x/crypto/sha3"
 )
 
 type sealingQueue struct {
 	hash       common.Hash                 // hash of the header
 	sealer     common.Address              // sealer address of the header
+	seed       []byte                      // random seed
 	active     map[common.Address]struct{} // active sealers for the next block
 	recent     map[common.Address]struct{} // recently signed sealers
 	sorted     []common.Address            // sorted queue ([active]-[recent]+sealer)
@@ -52,20 +55,45 @@ func (q *sealingQueue) sealersDigest() common.Hash {
 	return q.digest
 }
 
+// sealerShuffling implements the sort interface to allow sorting a list of addresses
+type seedShuffle struct {
+	seed  []byte
+	queue []common.Address
+}
+
+func (s seedShuffle) Len() int      { return len(s.queue) }
+func (s seedShuffle) Swap(i, j int) { s.queue[i], s.queue[j] = s.queue[j], s.queue[i] }
+func (s seedShuffle) Less(i, j int) bool {
+	// TODO cache these hashes
+	sha := func(address common.Address, seed []byte) []byte {
+		hasher := sha3.NewLegacyKeccak256()
+		hasher.Write(address[:])
+		hasher.Write(seed)
+		return hasher.Sum(nil)
+	}
+	si := sha(s.queue[i], s.seed)
+	sj := sha(s.queue[j], s.seed)
+	return bytes.Compare(si, sj) < 0
+}
+
 // include the last sealer in for positioning even when the last sealer is just left/leaked
 func (q *sealingQueue) sortedQueue() []common.Address {
 	q.sortedOnce.Do(func() {
 		size := len(q.active) - len(q.recent) + 1
-		queue := make([]common.Address, 1, size)
-		queue[0] = q.sealer
+		s := seedShuffle{
+			seed:  q.seed,
+			queue: make([]common.Address, 1, size),
+		}
+		s.queue[0] = q.sealer
 		for adr := range q.active {
 			_, recentlySigned := q.recent[adr]
 			if !recentlySigned {
-				queue = append(queue, adr)
+				s.queue = append(s.queue, adr)
+				// TODO: pre-calculate the shuffling hash here
 			}
 		}
-		sort.Sort(signersAscending(queue))
-		q.sorted = queue
+		sort.Sort(s)
+		q.sorted = s.queue
 	})
 	return q.sorted
 }
@@ -167,6 +195,7 @@ func (d *Dccs) getSealingQueue(parentHash common.Hash, parents []*types.Header, 
 	queue := sealingQueue{
 		hash:   parentHash,
 		sealer: sealer,
+		seed:   parent.Nonce[:],
 		active: map[common.Address]struct{}{},
 		recent: map[common.Address]struct{}{},
 	}

@@ -101,14 +101,17 @@ func (d *Dccs) verifyHeader2(chain consensus.ChainReader, header *types.Header, 
 }
 
 func (d *Dccs) getBlockNonce(number *big.Int, parent *types.Header) types.BlockNonce {
-	return types.BlockNonce{}
-	// if d.config.CoLoaBlock.Cmp(number) == 0 {
-	// 	return types.BlockNonce{}
-	// } else if isSealerApplicationBlock(parent) {
-	// 	return types.EncodeNonce(1)
-	// } else {
-	// 	return types.EncodeNonce(parent.Nonce.Uint64() + 1)
-	// }
+	if d.config.CoLoaBlock.Cmp(number) == 0 {
+		return types.BlockNonce{}
+	}
+	nonce := parent.Nonce
+	b := parent.Hash().Bytes()[:8]
+	if b[0] < 256/16 {
+		// change the nonce once in 16 blocks, probabilistically
+		copy(nonce[:], b)
+		log.Trace("New random seed", "nonce", nonce)
+	}
+	return nonce
 }
 
 // verifyCascadingFields2 verifies all the header fields that are not standalone,
