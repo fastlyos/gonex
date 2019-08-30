@@ -406,7 +406,7 @@ func (d *Dccs) seal2(chain consensus.ChainReader, block *types.Block, results ch
 	if err != nil {
 		return err
 	}
-	if !d.inturn2(offset) {
+	if offset > 0 {
 		// It's not our turn explicitly to sign, delay it a bit
 		wiggle := d.calcDelayTimeForOffset(offset)
 		delay += wiggle

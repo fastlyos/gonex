@@ -30,13 +30,14 @@ import (
 )
 
 type sealingQueue struct {
-	hash       common.Hash
-	active     map[common.Address]struct{}
-	recent     map[common.Address]struct{}
+	hash       common.Hash                 // hash of the header
+	sealer     common.Address              // sealer address of the header
+	active     map[common.Address]struct{} // active sealers for the next block
+	recent     map[common.Address]struct{} // recently signed sealers
+	sorted     []common.Address            // sorted queue ([active]-[recent]+sealer)
+	digest     common.Hash                 // hash(sort(active))
 	sortedOnce sync.Once
-	sorted     []common.Address
 	digestOnce sync.Once
-	digest     common.Hash
 }
 
 func (q *sealingQueue) sealersDigest() common.Hash {
@@ -51,9 +52,12 @@ func (q *sealingQueue) sealersDigest() common.Hash {
 	return q.digest
 }
 
+// include the last sealer in for positioning even when the last sealer is just left/leaked
 func (q *sealingQueue) sortedQueue() []common.Address {
 	q.sortedOnce.Do(func() {
-		queue := make([]common.Address, 0, len(q.active)-len(q.recent))
+		size := len(q.active) - len(q.recent) + 1
+		queue := make([]common.Address, 1, size)
+		queue[0] = q.sealer
 		for adr := range q.active {
 			_, recentlySigned := q.recent[adr]
 			if !recentlySigned {
@@ -76,16 +80,64 @@ func (q *sealingQueue) isActive(address common.Address) bool {
 	return active
 }
 
-func (q *sealingQueue) offset(address common.Address,
+func (q *sealingQueue) offset(signer common.Address,
 	getHeaderByHash func(common.Hash) *types.Header,
 	sigCache *lru.ARCCache) (int, error) {
+
+	activeLen := len(q.active)
+
+	if activeLen-len(q.recent) <= 1 {
+		// no competition
+		return 0, nil
+	}
+
+	if signer == q.sealer {
+		return activeLen, errRecentlySigned
+	}
+
 	queue := q.sortedQueue()
-	return offset2(address, q.hash, queue, getHeaderByHash, sigCache)
+
+	signerPosition := func(signer common.Address) (int, bool) {
+		for i, sig := range queue {
+			if sig == signer {
+				return i, true
+			}
+		}
+		return -1, false
+	}
+
+	pos, ok := signerPosition(signer)
+	if !ok {
+		// unable to find the signer position
+		return activeLen, errUnauthorizedSigner
+	}
+
+	prevPos, ok := signerPosition(q.sealer)
+	if !ok {
+		// unable to find the previous signer position: should never happen
+		return activeLen, errUnknownPreviousSealer
+	}
+
+	offset := pos - prevPos - 1
+	if offset < 0 {
+		offset += len(queue)
+	}
+
+	log.Trace("sealingQueue.offset",
+		"offset", offset,
+		"signer position", pos,
+		"previous signer position", prevPos,
+		"len(queue)", len(queue),
+		"len(active)", len(q.active),
+		"len(recent)", len(q.recent))
+
+	return offset, nil
 }
 
 func (q *sealingQueue) difficulty(address common.Address,
 	getHeaderByHash func(common.Hash) *types.Header,
 	sigCache *lru.ARCCache) uint64 {
+
 	offset, err := q.offset(address, getHeaderByHash, sigCache)
 	if err != nil {
 		return 0
@@ -96,6 +148,7 @@ func (q *sealingQueue) difficulty(address common.Address,
 	return uint64(n - offset)
 }
 
+// recents len is MIN(lastActiveLen,activeLen)/2
 func (d *Dccs) getSealingQueue(parentHash common.Hash, parents []*types.Header, chain consensus.ChainReader) (*sealingQueue, error) {
 	if q, ok := d.sealingQueueCache.Get(parentHash); ok {
 		// in-memory sealingQueue found
@@ -107,8 +160,13 @@ func (d *Dccs) getSealingQueue(parentHash common.Hash, parents []*types.Header, 
 	if parent == nil {
 		return nil, errUnknownPreviousSealer
 	}
+	sealer, err := ecrecover(parent, d.signatures)
+	if err != nil {
+		return nil, err
+	}
 	queue := sealingQueue{
 		hash:   parentHash,
+		sealer: sealer,
 		active: map[common.Address]struct{}{},
 		recent: map[common.Address]struct{}{},
 	}
@@ -238,66 +296,4 @@ func (d *Dccs) crawlSealerApplications(header *types.Header, parents []*types.He
 		}
 	}
 	return apps, nil
-}
-
-// inturn2 returns if a signer at a given block height is in-turn or not.
-func (d *Dccs) inturn2(offset int) bool {
-	return offset == 0
-}
-
-func signerPosition2(signer common.Address, signers []common.Address) (int, bool) {
-	for i, sig := range signers {
-		if sig == signer {
-			return i, true
-		}
-	}
-	return -1, false
-}
-
-func offset2(signer common.Address, parentHash common.Hash, signers []common.Address, getHeaderByHash func(common.Hash) *types.Header, sigCache *lru.ARCCache) (int, error) {
-	n := len(signers)
-	if n <= 1 {
-		// no competition
-		return 0, nil
-	}
-
-	pos, ok := signerPosition2(signer, signers)
-	if !ok {
-		// unable to find the signer position
-		log.Error("eee", "signer", signer, "sealers", signers)
-		return n, errUnauthorizedSigner
-	}
-
-	prevPos, err := func() (int, error) {
-		for {
-			parent := getHeaderByHash(parentHash)
-			if parent == nil {
-				return 0, errUnknownPreviousSealer
-			}
-			// Resolve the last sealingQueue key and check against signer
-			prevSigner, err := ecrecover(parent, sigCache)
-			if err != nil {
-				return 0, err
-			}
-			prevPos, ok := signerPosition2(prevSigner, signers)
-			if ok {
-				// previous signer position found
-				return prevPos, nil
-			}
-			// previous signer could just left the syndicate
-			parentHash = parent.ParentHash
-		}
-	}()
-	if err != nil {
-		return 0, nil
-	}
-
-	offset := pos - prevPos - 1
-	if offset < 0 {
-		offset += n
-	}
-
-	log.Debug("offset", "signer position", pos, "previous signer position", prevPos, "len(signers)", n, "offset", offset)
-
-	return offset, nil
 }
