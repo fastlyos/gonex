@@ -43,7 +43,7 @@ const (
 )
 
 type extData struct {
-	majorityLink  *common.Hash
+	anchor        *common.Hash
 	sealersDigest *common.Hash
 	applications  []sealerApplication
 }
@@ -55,7 +55,7 @@ type sealerApplication struct {
 
 func (e *extData) Bytes() []byte {
 	size := len(e.applications) * (1 + common.AddressLength) // sealer applications
-	if e.majorityLink != nil {
+	if e.anchor != nil {
 		size += 1 + common.HashLength
 	}
 	if e.sealersDigest != nil {
@@ -63,10 +63,10 @@ func (e *extData) Bytes() []byte {
 	}
 	extra := make([]byte, size)
 	i := 0
-	if e.majorityLink != nil {
+	if e.anchor != nil {
 		extra[i] = ExtendedDataTypeCrossLink
 		i++
-		copy(extra[i:i+common.HashLength], e.majorityLink.Bytes())
+		copy(extra[i:i+common.HashLength], e.anchor.Bytes())
 		i += common.HashLength
 	}
 	if e.sealersDigest != nil {
@@ -117,7 +117,7 @@ func bytesToExtData(extra []byte) (*extData, error) {
 				return nil, errInvalidCrosslinkLength
 			}
 			digest := common.BytesToHash(extra[i : i+common.HashLength])
-			extData.majorityLink = &digest
+			extData.anchor = &digest
 			i += common.HashLength
 		default:
 			return nil, errInvalidExtExtraKind

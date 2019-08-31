@@ -137,7 +137,7 @@ func (d *Dccs) verifyCascadingFields2(chain consensus.ChainReader, header *types
 		return ErrInvalidTimestamp
 	}
 
-	// verify the distant from the last sealer application block
+	// verify the random seed
 	nonce := d.getBlockNonce(header.Number, parent)
 	if header.Nonce != nonce {
 		log.Error("invalid nonce", "expected", nonce, "actual", header.Nonce)
@@ -148,7 +148,7 @@ func (d *Dccs) verifyCascadingFields2(chain consensus.ChainReader, header *types
 	var expectedMixDigest common.Hash
 	if d.config.CoLoaBlock.Cmp(header.Number) == 0 {
 		expectedMixDigest = common.Hash{}
-	} else if d.isSealerApplicationBlock(parent) {
+	} else if isLink(parent) {
 		expectedMixDigest = parent.Hash()
 	} else {
 		expectedMixDigest = parent.MixDigest
@@ -270,14 +270,38 @@ func getAvailableHeaderByHash(hash common.Hash, header *types.Header, parents []
 	return nil
 }
 
-func (d *Dccs) isSealerApplicationBlock(header *types.Header) bool {
-	if d.config.CoLoaBlock.Cmp(header.Number) == 0 {
-		return true
-	}
+func isLink(header *types.Header) bool {
+	// if d.config.CoLoaBlock.Cmp(header.Number) == 0 {
+	// 	return true
+	// }
 	if len(header.Extra) <= extraVanity+extraSeal {
 		return false
 	}
 	return header.Extra[extraVanity]&0xF0 == 0xF0
+}
+
+func getLink(header *types.Header, parents []*types.Header, chain consensus.ChainReader) *types.Header {
+	if header.MixDigest == (common.Hash{}) {
+		// hardfork block is linked to itself
+		return header
+	}
+	return getAvailableHeaderByHash(header.MixDigest, header, parents, chain)
+}
+
+func (d *Dccs) getAnchor(header *types.Header, parents []*types.Header, chain consensus.ChainReader) (*types.Header, error) {
+	link := header
+	if !isLink(header) {
+		link = getLink(header, parents, chain)
+	}
+	ext, err := d.getExtData(link)
+	if err != nil {
+		return nil, err
+	}
+	if ext.anchor == nil {
+		// hardfork block is anchored to itself
+		return link, nil
+	}
+	return getAvailableHeaderByHash(*ext.anchor, header, parents, chain), nil
 }
 
 // prepareBeneficiary2 gets the beneficiary of signer from smart contract and
@@ -338,55 +362,91 @@ func (d *Dccs) prepare2(chain consensus.ChainReader, header *types.Header) error
 
 	d.prepareBeneficiary2(header, chain)
 
-	// set the cross-link reference to the last sealer application block
-	if d.config.CoLoaBlock.Cmp(header.Number) == 0 {
-		header.MixDigest = common.Hash{}
-	} else if d.isSealerApplicationBlock(parent) {
-		header.MixDigest = parent.Hash()
-	} else {
-		header.MixDigest = parent.MixDigest
-	}
-
 	queue, err := d.getSealingQueue(header.ParentHash, nil, chain)
 	if err != nil {
 		return err
 	}
-	// // Mix digest is record the hash digest of all authorized sealer for this block
-	// header.MixDigest = types.RLPHash(sealers)
 
 	// Set the correct difficulty
 	difficulty := queue.difficulty(d.signer, chain.GetHeaderByHash, d.signatures)
 	header.Difficulty = new(big.Int).SetUint64(difficulty)
-
-	// Ensure the extra data has all it's components
-	if len(header.Extra) < extraVanity {
-		header.Extra = append(header.Extra, bytes.Repeat([]byte{0x00}, extraVanity-len(header.Extra))...)
-	}
-	header.Extra = header.Extra[:extraVanity]
-
-	applications, err := d.fetchSealerApplications(parent, chain)
-	if err != nil {
-		log.Error("failed to get changed sealer from log", "parent", parent.Number, "err", err)
-		return err
-	}
-	if len(applications) > 0 {
-		log.Error("sealers", "applications", applications)
-		digest := queue.sealersDigest()
-		extData := extData{
-			sealersDigest: &digest,
-			applications:  applications,
-		}
-		header.Extra = append(header.Extra, extData.Bytes()...)
-		log.Error("prepare2", "extData", extData)
-	}
-
-	header.Extra = append(header.Extra, make([]byte, extraSeal)...)
 
 	// Ensure the timestamp has the correct delay
 	header.Time = parent.Time + d.config.Period
 	if header.Time < uint64(time.Now().Unix()) {
 		header.Time = uint64(time.Now().Unix())
 	}
+
+	// Prepare the start of the header.Extra
+	if len(header.Extra) < extraVanity {
+		header.Extra = append(header.Extra, bytes.Repeat([]byte{0x00}, extraVanity-len(header.Extra))...)
+	}
+	header.Extra = header.Extra[:extraVanity]
+
+	if d.config.CoLoaBlock.Cmp(header.Number) == 0 {
+		// special handling for hardfork block
+		header.MixDigest = common.Hash{}
+		digest := queue.sealersDigest()
+		ext := extData{
+			// anchor:        new(common.Hash),
+			sealersDigest: &digest,
+		}
+		header.Extra = append(header.Extra, ext.Bytes()...)
+		header.Extra = append(header.Extra, make([]byte, extraSeal)...)
+		return nil
+	}
+
+	// set the cross-link reference to the last sealer application block
+	if isLink(parent) {
+		header.MixDigest = parent.Hash()
+	} else {
+		header.MixDigest = parent.MixDigest
+	}
+
+	// extData is recorded when the block is a cross-link, which happens when either:
+	// + the parent block has sealer application tx(s), or
+	// + the new sealingQueue super-majority continuity is broken
+	ext := extData{}
+
+	link := getLink(parent, nil, chain)
+	anchor, err := d.getAnchor(link, nil, chain)
+	if err != nil {
+		return err
+	}
+	anchorQueue, err := d.getSealingQueue(anchor.ParentHash, nil, chain)
+	if err != nil {
+		return err
+	}
+
+	if !queue.shareSuperMajority(anchorQueue) {
+		// super-majority continuity broken, promote the current link to anchor
+		ext.anchor = &header.MixDigest
+		// TODO: handle cases where the link continuity is also broken
+	}
+
+	apps, err := d.fetchSealerApplications(parent, chain)
+	if err != nil {
+		log.Error("failed to get changed sealer from log", "parent", parent.Number, "err", err)
+		return err
+	}
+	// parent block has sealer application tx(s)
+	if len(apps) > 0 {
+		log.Error("sealers", "applications", apps)
+		ext.applications = apps
+		if ext.anchor == nil {
+			anchorHash := anchor.Hash()
+			ext.anchor = &anchorHash
+		}
+	}
+
+	if ext.anchor != nil {
+		digest := queue.sealersDigest()
+		ext.sealersDigest = &digest
+		header.Extra = append(header.Extra, ext.Bytes()...)
+		log.Error("prepare2", "extData", ext)
+	}
+
+	header.Extra = append(header.Extra, make([]byte, extraSeal)...)
 	return nil
 }
 

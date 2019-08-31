@@ -55,6 +55,26 @@ func (q *sealingQueue) sealersDigest() common.Hash {
 	return q.digest
 }
 
+func (q *sealingQueue) shareSuperMajority(r *sealingQueue) bool {
+	qLen := len(q.active)
+	rLen := len(r.active)
+	var smaller, larger map[common.Address]struct{}
+	if qLen < rLen {
+		smaller, larger = q.active, r.active
+	} else {
+		smaller, larger = r.active, q.active
+	}
+	common := 0
+	for a := range smaller {
+		if _, ok := larger[a]; ok {
+			common++
+		}
+	}
+	// common should not be less that super majority of both queues
+	common *= 3
+	return common >= qLen*2 && common >= rLen*2
+}
+
 // sealerShuffling implements the sort interface to allow sorting a list of addresses
 type seedShuffle struct {
 	seed  []byte
