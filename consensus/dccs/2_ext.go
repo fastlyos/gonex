@@ -21,6 +21,7 @@ import (
 	"errors"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/log"
 )
 
@@ -41,27 +42,7 @@ const (
 	ExtendedDataTypeCrossLink    byte = 0xFF
 )
 
-// type extData struct {
-// 	data []byte
-// }
-
-// func (e *extData) Kind() byte {
-// 	return e.data[0]
-// }
-
-// func (e *extData) Bytes() []byte {
-// 	return e.data[1:]
-// }
-
-// func (e *extData) Address() common.Address {
-// 	return common.BytesToAddress(e.Bytes())
-// }
-
-// func (e *extData) Hash() common.Hash {
-// 	return common.BytesToHash(e.Bytes())
-// }
-
-type extExtra struct {
+type extData struct {
 	majorityLink  *common.Hash
 	sealersDigest *common.Hash
 	applications  []sealerApplication
@@ -72,7 +53,7 @@ type sealerApplication struct {
 	action bool // isJoined
 }
 
-func (e *extExtra) Bytes() []byte {
+func (e *extData) Bytes() []byte {
 	size := len(e.applications) * (1 + common.AddressLength) // sealer applications
 	if e.majorityLink != nil {
 		size += 1 + common.HashLength
@@ -107,8 +88,8 @@ func (e *extExtra) Bytes() []byte {
 	return extra
 }
 
-func bytesToExtExtra(extra []byte) (*extExtra, error) {
-	var extExtra extExtra
+func bytesToExtData(extra []byte) (*extData, error) {
+	var extData extData
 	size := len(extra)
 	for i := 0; i < size; {
 		kind := extra[i]
@@ -116,10 +97,10 @@ func bytesToExtExtra(extra []byte) (*extExtra, error) {
 		switch kind {
 		case ExtendedDataTypeSealerJoin, ExtendedDataTypeSealerLeave:
 			if i+common.AddressLength > size {
-				log.Error("bytesToExtExtra", "extra", common.Bytes2Hex(extra), "i", i)
+				log.Error("bytesToExtData", "extra", common.Bytes2Hex(extra), "i", i)
 				return nil, errInvalidSealerAddressLength
 			}
-			extExtra.applications = append(extExtra.applications, sealerApplication{
+			extData.applications = append(extData.applications, sealerApplication{
 				sealer: common.BytesToAddress(extra[i : i+common.AddressLength]),
 				action: kind == ExtendedDataTypeSealerJoin,
 			})
@@ -129,18 +110,36 @@ func bytesToExtExtra(extra []byte) (*extExtra, error) {
 				return nil, errInvalidSealerDigestLength
 			}
 			digest := common.BytesToHash(extra[i : i+common.HashLength])
-			extExtra.sealersDigest = &digest
+			extData.sealersDigest = &digest
 			i += common.HashLength
 		case ExtendedDataTypeCrossLink:
 			if i+common.HashLength > size {
 				return nil, errInvalidCrosslinkLength
 			}
 			digest := common.BytesToHash(extra[i : i+common.HashLength])
-			extExtra.majorityLink = &digest
+			extData.majorityLink = &digest
 			i += common.HashLength
 		default:
 			return nil, errInvalidExtExtraKind
 		}
 	}
-	return &extExtra, nil
+	return &extData, nil
+}
+
+func (d *Dccs) getExtData(header *types.Header) (*extData, error) {
+	if len(header.Extra) <= extraVanity+extraSeal {
+		return nil, nil
+	}
+	hash := header.Hash()
+	if e, ok := d.extDataCache.Get(hash); ok {
+		// in-memory sealingQueue found
+		ed := e.(*extData)
+		return ed, nil
+	}
+	ext, err := bytesToExtData(header.Extra[extraVanity : len(header.Extra)-extraSeal])
+	if err != nil || ext == nil {
+		return nil, err
+	}
+	d.extDataCache.Add(hash, ext)
+	return ext, nil
 }

@@ -316,12 +316,12 @@ func (d *Dccs) crawlSealerApplications(header *types.Header, parents []*types.He
 			log.Error("no sealer application data in header extra", "app number", header.Number, "number", number)
 			return nil, errors.New("no sealer application data in header extra")
 		}
-		extExtra, err := bytesToExtExtra(header.Extra[extraVanity : len(header.Extra)-extraSeal])
+		extData, err := bytesToExtData(header.Extra[extraVanity : len(header.Extra)-extraSeal])
 		if err != nil {
 			return nil, err
 		}
-		if len(extExtra.applications) > 0 {
-			apps = append(extExtra.applications, apps...)
+		if len(extData.applications) > 0 {
+			apps = append(extData.applications, apps...)
 		}
 	}
 	return apps, nil

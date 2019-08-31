@@ -37,7 +37,8 @@ import (
 )
 
 const (
-	inmemorySealingQueues = 4 // no point keeping too many of this around
+	inmemorySealingQueues = 16
+	inmemoryExtDatas      = 16
 )
 
 var (
@@ -56,6 +57,7 @@ var (
 func (d *Dccs) init2() *Dccs {
 	d.init1()
 	d.sealingQueueCache, _ = lru.NewARC(inmemorySealingQueues)
+	d.extDataCache, _ = lru.NewARC(inmemoryExtDatas)
 	return d
 }
 
@@ -127,12 +129,7 @@ func (d *Dccs) verifyCascadingFields2(chain consensus.ChainReader, header *types
 		return nil
 	}
 	// Ensure that the block's timestamp isn't too close to it's parent
-	var parent *types.Header
-	if len(parents) > 0 {
-		parent = parents[len(parents)-1]
-	} else {
-		parent = chain.GetHeader(header.ParentHash, number-1)
-	}
+	parent := getAvailableHeaderByHash(header.ParentHash, header, parents, chain)
 	if parent == nil || parent.Number.Uint64() != number-1 || parent.Hash() != header.ParentHash {
 		return consensus.ErrUnknownAncestor
 	}
@@ -160,24 +157,10 @@ func (d *Dccs) verifyCascadingFields2(chain consensus.ChainReader, header *types
 		return fmt.Errorf("invalid cross-link digest: number=%v, want=%v, have=%v", header.Number, expectedMixDigest, header.MixDigest)
 	}
 
-	// Retrieve the sealing queue verify this header
-	queue, err := d.getSealingQueue(header.ParentHash, parents, chain)
+	// Verify the extended extra data in header.Extra
+	ext, err := d.getExtData(header)
 	if err != nil {
 		return err
-	}
-
-	// Verify the extended extra data in header.Extra
-	var ext *extExtra
-	if len(header.Extra) > extraVanity+extraSeal {
-		ext, err = bytesToExtExtra(header.Extra[extraVanity : len(header.Extra)-extraSeal])
-		if err != nil {
-			return err
-		}
-		if ext.sealersDigest != nil {
-			if *ext.sealersDigest != queue.sealersDigest() {
-				return errInvalidSealersDigest
-			}
-		}
 	}
 
 	apps, err := d.fetchSealerApplications(parent, chain)
@@ -212,8 +195,8 @@ func (d *Dccs) verifyCascadingFields2(chain consensus.ChainReader, header *types
 				return errSealerApplicationNotMatch
 			}
 		}
+		// sealerDigest is verified in engine.VerifySeal
 	}
-
 	// All basic checks passed, verify the seal and return
 	return d.verifySeal2(chain, header, parents)
 }
@@ -253,6 +236,17 @@ func (d *Dccs) verifySeal2(chain consensus.ChainReader, header *types.Header, pa
 	}, d.signatures)
 	if header.Difficulty.Uint64() != signerDifficulty {
 		return errInvalidDifficulty
+	}
+
+	// Verify the sealer digest in header.Extra
+	ext, err := d.getExtData(header)
+	if err != nil {
+		return err
+	}
+	if ext != nil && ext.sealersDigest != nil {
+		if *ext.sealersDigest != queue.sealersDigest() {
+			return errInvalidSealersDigest
+		}
 	}
 	return nil
 }
@@ -378,12 +372,12 @@ func (d *Dccs) prepare2(chain consensus.ChainReader, header *types.Header) error
 	if len(applications) > 0 {
 		log.Error("sealers", "applications", applications)
 		digest := queue.sealersDigest()
-		extExtra := extExtra{
+		extData := extData{
 			sealersDigest: &digest,
 			applications:  applications,
 		}
-		header.Extra = append(header.Extra, extExtra.Bytes()...)
-		log.Error("prepare2", "extExtra", extExtra)
+		header.Extra = append(header.Extra, extData.Bytes()...)
+		log.Error("prepare2", "extData", extData)
 	}
 
 	header.Extra = append(header.Extra, make([]byte, extraSeal)...)
