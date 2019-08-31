@@ -26,10 +26,12 @@ import (
 
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/consensus/misc"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/log"
 	lru "github.com/hashicorp/golang-lru"
 )
@@ -284,6 +286,50 @@ func (d *Dccs) isSealerApplicationBlock(header *types.Header) bool {
 	return header.Extra[extraVanity]&0xF0 == 0xF0
 }
 
+// prepareBeneficiary2 gets the beneficiary of signer from smart contract and
+// set to header's coinbase to give sealing reward later.
+// + check the contract of current state first
+// + trace back the previous header for 'just left sealer'
+// + if all else fails, the sealer address is kept as reward beneficiary
+func (d *Dccs) prepareBeneficiary2(header *types.Header, chain consensus.ChainReader) {
+	index := common.BigToHash(common.Big1).String()[2:]
+	sealer := "0x000000000000000000000000" + header.Coinbase.String()[2:]
+	key := crypto.Keccak256Hash(hexutil.MustDecode(sealer + index))
+
+	number := header.Number.Uint64()
+
+	// try the current active state first
+	state, err := chain.State()
+	if err == nil && state != nil {
+		hash := state.GetState(chain.Config().Dccs.Contract, key)
+		if (hash != common.Hash{}) {
+			header.Coinbase = common.HexToAddress(hash.Hex())
+			return
+		}
+	}
+
+	// scan the previous signed blocks
+	for n := number - 1; n >= number-d.config.LeakDuration; n-- {
+		if n < 1 {
+			break
+		}
+		h := chain.GetHeaderByNumber(n)
+		if h == nil {
+			break
+		}
+		s, err := ecrecover(h, d.signatures)
+		if err != nil {
+			log.Error("Unable to recover signature", "err", err)
+			return
+		}
+		if s == d.signer {
+			// found the previous sealed block
+			header.Coinbase = h.Coinbase
+			return
+		}
+	}
+}
+
 // prepare2 implements consensus.Engine, preparing all the consensus fields of the
 // header for running the transactions on top.
 func (d *Dccs) prepare2(chain consensus.ChainReader, header *types.Header) error {
@@ -296,7 +342,7 @@ func (d *Dccs) prepare2(chain consensus.ChainReader, header *types.Header) error
 	// record the distant from the last sealer application block
 	header.Nonce = d.getBlockNonce(header.Number, parent)
 
-	d.prepareBeneficiary(header, chain)
+	d.prepareBeneficiary2(header, chain)
 
 	// set the cross-link reference to the last sealer application block
 	if d.config.CoLoaBlock.Cmp(header.Number) == 0 {
