@@ -43,14 +43,18 @@ const (
 )
 
 type extData struct {
-	anchor        *common.Hash
-	sealersDigest *common.Hash
+	anchor        *common.Hash `rlp:"nil"`
+	sealersDigest *common.Hash `rlp:"nil"`
 	applications  []sealerApplication
 }
 
 type sealerApplication struct {
+	action byte
 	sealer common.Address
-	action bool // isJoined
+}
+
+func (a *sealerApplication) isJoined() bool {
+	return a.action == ExtendedDataTypeSealerJoin
 }
 
 func (e *extData) Bytes() []byte {
@@ -76,11 +80,7 @@ func (e *extData) Bytes() []byte {
 		i += common.HashLength
 	}
 	for _, app := range e.applications {
-		if app.action {
-			extra[i] = ExtendedDataTypeSealerJoin
-		} else {
-			extra[i] = ExtendedDataTypeSealerLeave
-		}
+		extra[i] = app.action
 		i++
 		copy(extra[i:i+common.AddressLength], app.sealer.Bytes())
 		i += common.AddressLength
@@ -102,7 +102,7 @@ func bytesToExtData(extra []byte) (*extData, error) {
 			}
 			extData.applications = append(extData.applications, sealerApplication{
 				sealer: common.BytesToAddress(extra[i : i+common.AddressLength]),
-				action: kind == ExtendedDataTypeSealerJoin,
+				action: kind,
 			})
 			i += common.AddressLength
 		case ExtendedDataTypeSealerDigest:

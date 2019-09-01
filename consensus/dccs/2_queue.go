@@ -291,7 +291,7 @@ func (d *Dccs) getSealingQueue(parentHash common.Hash, parents []*types.Header, 
 		return nil, err
 	}
 	for _, app := range apps {
-		if app.action {
+		if app.isJoined() {
 			log.Error("++++++++++ joined")
 			addActive(app.sealer)
 		} else {

@@ -95,17 +95,16 @@ func (d *Dccs) fetchSealerApplications(header *types.Header, chain consensus.Cha
 	for i, l := range logs {
 		// len(log.Data) must be 32 * 2 here
 		sealer := common.BytesToAddress(l.Data[32:])
-		var joined bool
-		if l.Topics[0] == joinedTopic {
-			joined = true
-			staker := common.BytesToAddress(l.Data[:32])
-			log.Error("Sealer joined", "sealer", sealer, "coinbase", staker)
-		} else {
-			log.Error("Sealer left", "sealer", sealer)
-		}
 		applications[i] = sealerApplication{
 			sealer: sealer,
-			action: joined,
+		}
+		if l.Topics[0] == joinedTopic {
+			staker := common.BytesToAddress(l.Data[:32])
+			applications[i].action = ExtendedDataTypeSealerJoin
+			log.Error("Sealer joined", "sealer", sealer, "coinbase", staker)
+		} else {
+			applications[i].action = ExtendedDataTypeSealerLeave
+			log.Error("Sealer left", "sealer", sealer)
 		}
 	}
 	return applications, nil
