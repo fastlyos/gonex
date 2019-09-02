@@ -32,7 +32,7 @@ import (
 	"golang.org/x/crypto/sha3"
 )
 
-type sealingQueue struct {
+type SealingQueue struct {
 	hash       common.Hash                 // hash of the header
 	sealer     common.Address              // sealer address of the header
 	seed       []byte                      // random seed
@@ -44,7 +44,7 @@ type sealingQueue struct {
 	digestOnce sync.Once
 }
 
-func (q *sealingQueue) sealersDigest() common.Hash {
+func (q *SealingQueue) sealersDigest() common.Hash {
 	q.digestOnce.Do(func() {
 		active := make([]common.Address, 0, len(q.active))
 		for adr := range q.active {
@@ -57,7 +57,7 @@ func (q *sealingQueue) sealersDigest() common.Hash {
 }
 
 // weirdly optimized: returns nil when the super majority continuity is preserved
-func (q *sealingQueue) commonRatio(r *sealingQueue) *big.Rat {
+func (q *SealingQueue) commonRatio(r *SealingQueue) *big.Rat {
 	qLen := len(q.active)
 	rLen := len(r.active)
 	var smaller, larger map[common.Address]struct{}
@@ -101,7 +101,7 @@ func (s seedShuffle) Less(i, j int) bool {
 }
 
 // include the last sealer in for positioning even when the last sealer is just left/leaked
-func (q *sealingQueue) sortedQueue() []common.Address {
+func (q *SealingQueue) sortedQueue() []common.Address {
 	q.sortedOnce.Do(func() {
 		size := len(q.active) - len(q.recent) + 1
 		s := seedShuffle{
@@ -122,17 +122,17 @@ func (q *sealingQueue) sortedQueue() []common.Address {
 	return q.sorted
 }
 
-func (q *sealingQueue) isRecentlySigned(address common.Address) bool {
+func (q *SealingQueue) isRecentlySigned(address common.Address) bool {
 	_, recentlySigned := q.recent[address]
 	return recentlySigned
 }
 
-func (q *sealingQueue) isActive(address common.Address) bool {
+func (q *SealingQueue) isActive(address common.Address) bool {
 	_, active := q.active[address]
 	return active
 }
 
-func (q *sealingQueue) offset(signer common.Address,
+func (q *SealingQueue) offset(signer common.Address,
 	getHeaderByHash func(common.Hash) *types.Header,
 	sigCache *lru.ARCCache) (int, error) {
 
@@ -175,7 +175,7 @@ func (q *sealingQueue) offset(signer common.Address,
 		offset += len(queue)
 	}
 
-	log.Trace("sealingQueue.offset",
+	log.Trace("SealingQueue.offset",
 		"offset", offset,
 		"signer position", pos,
 		"previous signer position", prevPos,
@@ -186,7 +186,7 @@ func (q *sealingQueue) offset(signer common.Address,
 	return offset, nil
 }
 
-func (q *sealingQueue) difficulty(address common.Address,
+func (q *SealingQueue) difficulty(address common.Address,
 	getHeaderByHash func(common.Hash) *types.Header,
 	sigCache *lru.ARCCache) uint64 {
 
@@ -201,10 +201,10 @@ func (q *sealingQueue) difficulty(address common.Address,
 }
 
 // recents len is MIN(lastActiveLen,activeLen)/2
-func (d *Dccs) getSealingQueue(parentHash common.Hash, parents []*types.Header, chain consensus.ChainReader) (*sealingQueue, error) {
+func (d *Dccs) getSealingQueue(parentHash common.Hash, parents []*types.Header, chain consensus.ChainReader) (*SealingQueue, error) {
 	if q, ok := d.sealingQueueCache.Get(parentHash); ok {
-		// in-memory sealingQueue found
-		queue := q.(*sealingQueue)
+		// in-memory SealingQueue found
+		queue := q.(*SealingQueue)
 		return queue, nil
 	}
 	log.Error("getSealingQueue", "parentHash", parentHash)
@@ -216,7 +216,7 @@ func (d *Dccs) getSealingQueue(parentHash common.Hash, parents []*types.Header, 
 	if err != nil {
 		return nil, err
 	}
-	queue := sealingQueue{
+	queue := SealingQueue{
 		hash:   parentHash,
 		sealer: sealer,
 		seed:   parent.Nonce[:],
@@ -340,7 +340,7 @@ func (d *Dccs) crawlSealerApplications(header *types.Header, parents []*types.He
 			log.Error("no sealer application data in header extra", "app number", header.Number, "number", number)
 			return nil, errors.New("no sealer application data in header extra")
 		}
-		link, _, err := bytesToLinkData(header.Extra[extraVanity : len(header.Extra)-extraSeal])
+		link, _, err := bytesToAnchorData(header.Extra[extraVanity : len(header.Extra)-extraSeal])
 		if err != nil {
 			return nil, err
 		}

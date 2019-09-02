@@ -146,7 +146,7 @@ type Dccs struct {
 	signFn SignerFn       // Signer function to authorize hashes with
 	lock   sync.RWMutex   // Protects the signer fields
 
-	sealingQueueCache *lru.ARCCache // sealingQueue of recent blocks
+	sealingQueueCache *lru.ARCCache // SealingQueue of recent blocks
 	extDataCache      *lru.ARCCache // ExtendedData of recent blocks
 }
 

@@ -38,18 +38,18 @@ const (
 	ExtendedDataTypeNone        byte = 0x00
 	ExtendedDataTypeSealerJoin  byte = 0xF0
 	ExtendedDataTypeSealerLeave byte = 0xF1
-	ExtendedDataTypeLink        byte = 0xFF
+	ExtendedDataTypeAnchor      byte = 0xFF
 )
 
 // ExtendedData is the data encoded in header.Extra[extraVanity:-extraSeal]
 type ExtendedData struct {
-	link *LinkData // always comes first
+	anchor *AnchorData // always comes first
 }
 
-type LinkData struct {
-	anchorHash    common.Hash `rlp:"nil"`
-	sealersDigest common.Hash `rlp:"nil"`
-	applications  []SealerApplication
+type AnchorData struct {
+	destHash      common.Hash         // hash of the anchor destination block
+	sealersDigest common.Hash         // digest of the ordered active sealer for this block
+	applications  []SealerApplication // sealer applications confirmed in the parent block
 }
 
 // SealerApplication packs the sealer address and its application action.
@@ -62,15 +62,15 @@ func (a *SealerApplication) isJoined() bool {
 	return a.action == ExtendedDataTypeSealerJoin
 }
 
-func (e *LinkData) bytes() []byte {
+func (e *AnchorData) bytes() []byte {
 	if e == nil {
 		return []byte{}
 	}
 	size := 1 + 2*common.HashLength
 	size += (1 + common.AddressLength) * len(e.applications) // sealer applications
 	extra := make([]byte, 0, size)
-	extra = append(extra, ExtendedDataTypeLink)
-	extra = append(extra, e.anchorHash.Bytes()...)
+	extra = append(extra, ExtendedDataTypeAnchor)
+	extra = append(extra, e.destHash.Bytes()...)
 	extra = append(extra, e.sealersDigest.Bytes()...)
 	for _, app := range e.applications {
 		extra = append(extra, app.action)
@@ -79,19 +79,19 @@ func (e *LinkData) bytes() []byte {
 	return extra
 }
 
-func bytesToLinkData(extra []byte) (*LinkData, int, error) {
+func bytesToAnchorData(extra []byte) (*AnchorData, int, error) {
 	size := len(extra)
 	if size == 0 {
 		return nil, 0, nil
 	}
-	if extra[0] != ExtendedDataTypeLink {
+	if extra[0] != ExtendedDataTypeAnchor {
 		return nil, 0, nil
 	}
 	if size < 1+2*common.HashLength {
 		return nil, 0, errInvalidExtraLinkLength
 	}
-	linkData := LinkData{
-		anchorHash:    common.BytesToHash(extra[1 : 1+common.HashLength]),
+	anchorData := AnchorData{
+		destHash:      common.BytesToHash(extra[1 : 1+common.HashLength]),
 		sealersDigest: common.BytesToHash(extra[1+common.HashLength : 1+2*common.HashLength]),
 	}
 	for i := 1 + 2*common.HashLength; i < size; {
@@ -103,16 +103,16 @@ func bytesToLinkData(extra []byte) (*LinkData, int, error) {
 				log.Error("bytesToLinkData", "extra", common.Bytes2Hex(extra), "i", i)
 				return nil, i, errInvalidSealerAddressLength
 			}
-			linkData.applications = append(linkData.applications, SealerApplication{
+			anchorData.applications = append(anchorData.applications, SealerApplication{
 				sealer: common.BytesToAddress(extra[i : i+common.AddressLength]),
 				action: kind,
 			})
 			i += common.AddressLength
 		default:
-			return &linkData, i - 1, nil
+			return &anchorData, i - 1, nil
 		}
 	}
-	return &linkData, size, nil
+	return &anchorData, size, nil
 }
 
 func (e *ExtendedData) bytes() []byte {
@@ -120,17 +120,17 @@ func (e *ExtendedData) bytes() []byte {
 		return []byte{}
 	}
 	var bytes []byte
-	bytes = append(bytes, e.link.bytes()...)
+	bytes = append(bytes, e.anchor.bytes()...)
 	return bytes
 }
 
 func bytesToExtData(extra []byte) (*ExtendedData, error) {
-	linkData, _, err := bytesToLinkData(extra)
+	anchorData, _, err := bytesToAnchorData(extra)
 	if err != nil {
 		return nil, err
 	}
 	extData := ExtendedData{
-		link: linkData,
+		anchor: anchorData,
 	}
 	return &extData, nil
 }
@@ -141,7 +141,7 @@ func (d *Dccs) getExtData(header *types.Header) (*ExtendedData, error) {
 	}
 	hash := header.Hash()
 	if e, ok := d.extDataCache.Get(hash); ok {
-		// in-memory sealingQueue found
+		// in-memory SealingQueue found
 		ed := e.(*ExtendedData)
 		return ed, nil
 	}
@@ -153,7 +153,7 @@ func (d *Dccs) getExtData(header *types.Header) (*ExtendedData, error) {
 	return ext, nil
 }
 
-func (d *Dccs) getLinkData(header *types.Header) (*LinkData, error) {
+func (d *Dccs) getAnchorData(header *types.Header) (*AnchorData, error) {
 	extData, err := d.getExtData(header)
 	if err != nil {
 		return nil, err
@@ -161,10 +161,10 @@ func (d *Dccs) getLinkData(header *types.Header) (*LinkData, error) {
 	if extData == nil {
 		return nil, nil
 	}
-	return extData.link, nil
+	return extData.anchor, nil
 }
 
-func hasLinkData(header *types.Header) bool {
+func hasAnchorData(header *types.Header) bool {
 	// if d.config.CoLoaBlock.Cmp(header.Number) == 0 {
 	// 	return true
 	// }
@@ -172,5 +172,5 @@ func hasLinkData(header *types.Header) bool {
 		return false
 	}
 	// link data always at the start of the extended data
-	return header.Extra[extraVanity] == ExtendedDataTypeLink
+	return header.Extra[extraVanity] == ExtendedDataTypeAnchor
 }
