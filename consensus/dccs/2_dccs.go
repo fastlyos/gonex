@@ -39,17 +39,14 @@ import (
 const (
 	inmemorySealingQueues = 16
 	inmemoryExtDatas      = 16
+	inmemoryAnchorExtras  = 4
 )
 
 var (
-	errInvalidNonce                     = errors.New("Invalid block nonce as distant from the last sealer application block")
-	errUnknownPreviousSealer            = errors.New("Unknown previous block sealer")
-	errInvalidSealersDigest             = errors.New("Sealer digest does not matches")
-	errMissingLinkData                  = errors.New("Link data is missing when it's expected")
-	errMissingSealerApplicationExtra    = errors.New("Missing extra after a sealer application block")
-	errUnexpectedSealerApplicationExtra = errors.New("Unexpected sealer application extra")
-	errSealerApplicationCountNotMatch   = errors.New("Number of sealer applications do not match")
-	errSealerApplicationNotMatch        = errors.New("Sealer application does not match")
+	errInvalidNonce              = errors.New("Invalid block nonce as distant from the last sealer application block")
+	errUnknownPreviousSealer     = errors.New("Unknown previous block sealer")
+	errInvalidExtendedDataLength = errors.New("Invalid extended data length")
+	errExtendedDataMismatch      = errors.New("Extended data does not matches")
 )
 
 // Init the second hardfork of DCCS consensus
@@ -57,6 +54,7 @@ func (d *Dccs) init2() *Dccs {
 	d.init1()
 	d.sealingQueueCache, _ = lru.NewARC(inmemorySealingQueues)
 	d.extDataCache, _ = lru.NewARC(inmemoryExtDatas)
+	d.anchorExtraCache, _ = lru.NewARC(inmemoryAnchorExtras)
 	return d
 }
 
@@ -157,40 +155,23 @@ func (d *Dccs) verifyCascadingFields2(chain consensus.ChainReader, header *types
 	}
 
 	// Verify the extended extra data in header.Extra
-	link, err := d.getAnchorData(header)
+	expectedAnchorBytes, err := d.assembleAnchorExtra(parent, parents, chain)
 	if err != nil {
 		return err
 	}
+	expectedAnchorBytesLength := len(expectedAnchorBytes)
 
-	apps, err := d.fetchSealerApplications(parent, chain)
-	if err != nil {
-		return err
+	extBytes := header.Extra[extraVanity : len(header.Extra)-extraSeal]
+	if len(extBytes) < expectedAnchorBytesLength {
+		return errInvalidExtendedDataLength
+	}
+	if expectedAnchorBytesLength > 0 {
+		// anchor data always comes first in the extended extra
+		if bytes.Compare(extBytes[:expectedAnchorBytesLength], expectedAnchorBytes) != 0 {
+			return errExtendedDataMismatch
+		}
 	}
 
-	if len(apps) == 0 {
-		// parent block has no sealer application
-		if link != nil && len(link.applications) > 0 {
-			return errUnexpectedSealerApplicationExtra
-		}
-	} else {
-		// parent block has sealer application(s)
-		if link == nil {
-			return errMissingLinkData
-		}
-		if len(link.applications) == 0 {
-			return errMissingSealerApplicationExtra
-		}
-		if len(apps) != len(link.applications) {
-			return errSealerApplicationCountNotMatch
-		}
-		for i, app := range link.applications {
-			if app != apps[i] {
-				return errSealerApplicationNotMatch
-			}
-		}
-		// sealerDigest is verified in engine.VerifySeal
-		// TODO: verify link.anchorHash
-	}
 	// All basic checks passed, verify the seal and return
 	return d.verifySeal2(chain, header, parents)
 }
@@ -230,15 +211,6 @@ func (d *Dccs) verifySeal2(chain consensus.ChainReader, header *types.Header, pa
 	}, d.signatures)
 	if header.Difficulty.Uint64() != signerDifficulty {
 		return errInvalidDifficulty
-	}
-
-	// Verify the sealer digest in header.Extra
-	link, err := d.getAnchorData(header)
-	if err != nil {
-		return err
-	}
-	if link != nil && link.sealersDigest != queue.sealersDigest() {
-		return errInvalidSealersDigest
 	}
 	return nil
 }
@@ -374,161 +346,19 @@ func (d *Dccs) prepare2(chain consensus.ChainReader, header *types.Header) error
 		header.MixDigest = parent.MixDigest
 	}
 
+	anchorBytes, err := d.assembleAnchorExtra(parent, nil, chain)
+	if err != nil {
+		return err
+	}
+
 	// Prepare the start of the header.Extra
 	if len(header.Extra) < extraVanity {
 		header.Extra = append(header.Extra, bytes.Repeat([]byte{0x00}, extraVanity-len(header.Extra))...)
 	}
 	header.Extra = header.Extra[:extraVanity]
-
-	if d.config.CoLoaBlock.Cmp(header.Number) == 0 {
-		// special handling for hardfork block
-		anchorData := AnchorData{
-			destHash:      common.Hash{},
-			sealersDigest: queue.sealersDigest(),
-		}
-		ext := ExtendedData{
-			anchor: &anchorData,
-		}
-		header.Extra = append(header.Extra, ext.bytes()...)
-		header.Extra = append(header.Extra, make([]byte, extraSeal)...)
-		return nil
-	}
-
-	// AnchorData is recorded when the block is a cross-link, which happens when either:
-	// + the parent block has sealer application tx(s), or
-	// + the new SealingQueue super-majority continuity is broken
-
-	linkHeader := getLinkDest(parent, nil, chain)
-	anchorHeader, err := d.getAnchorDest(linkHeader, nil, chain)
-	if err != nil {
-		return err
-	}
-
-	anchorData := AnchorData{
-		destHash:      anchorHeader.Hash(),
-		sealersDigest: queue.sealersDigest(),
-	}
-	newAnchor := false
-
-	apps, err := d.fetchSealerApplications(parent, chain)
-	if err != nil {
-		log.Error("failed to get changed sealer from log", "parent", parent.Number, "err", err)
-		return err
-	}
-	// parent block has sealer application tx(s)
-	if len(apps) > 0 {
-		log.Info("sealers", "applications", apps)
-		anchorData.applications = apps
-		newAnchor = true
-	}
-
-	anchorQueue, err := d.getSealingQueue(anchorHeader.ParentHash, nil, chain)
-	if err != nil {
-		return err
-	}
-
-	anchorRatio := queue.commonRatio(anchorQueue)
-	if anchorRatio != nil {
-		// anchor continuity is broken, compare the current link to anchor
-		linkQueue, err := d.getSealingQueue(linkHeader.ParentHash, nil, chain)
-		if err != nil {
-			return err
-		}
-		linkRatio := queue.commonRatio(linkQueue)
-		if linkRatio == nil || linkRatio.Cmp(anchorRatio) > 0 {
-			// link continuity is preserved, or atleast better than anchor continuity
-			anchorData.destHash = header.MixDigest
-			newAnchor = true
-		}
-		// link continuity is also broken and worse than anchor continuity
-	}
-
-	if newAnchor {
-		ext := ExtendedData{
-			anchor: &anchorData,
-		}
-		header.Extra = append(header.Extra, ext.bytes()...)
-		log.Debug("prepare2", "ExtendedData", ext)
-	}
-
+	header.Extra = append(header.Extra, anchorBytes...)
 	header.Extra = append(header.Extra, make([]byte, extraSeal)...)
 	return nil
-}
-
-// AnchorData is recorded when the block is a cross-link, which happens when either:
-// + the parent block has sealer application tx(s), or
-// + the new SealingQueue super-majority continuity is broken
-func (d *Dccs) assembleExtendedExtra(parent *types.Header, header *types.Header, parents []*types.Header, chain consensus.ChainReader) ([]byte, error) {
-	queue, err := d.getSealingQueue(parent.Hash(), nil, chain)
-	if err != nil {
-		return nil, err
-	}
-
-	if parent.Number.Uint64()+1 == d.config.CoLoaBlock.Uint64() {
-		// special handling for hardfork block
-		anchorData := AnchorData{
-			destHash:      common.Hash{},
-			sealersDigest: queue.sealersDigest(),
-		}
-		ext := ExtendedData{
-			anchor: &anchorData,
-		}
-		return ext.bytes(), nil
-	}
-
-	linkHeader := getLinkDest(parent, nil, chain)
-	anchorHeader, err := d.getAnchorDest(linkHeader, nil, chain)
-	if err != nil {
-		return nil, err
-	}
-
-	anchorData := AnchorData{
-		destHash:      anchorHeader.Hash(),
-		sealersDigest: queue.sealersDigest(),
-	}
-	newAnchor := false
-
-	apps, err := d.fetchSealerApplications(parent, chain)
-	if err != nil {
-		log.Error("failed to get changed sealer from log", "parent", parent.Number, "err", err)
-		return nil, err
-	}
-	// parent block has sealer application tx(s)
-	if len(apps) > 0 {
-		log.Info("sealers", "applications", apps)
-		anchorData.applications = apps
-		newAnchor = true
-	}
-
-	anchorQueue, err := d.getSealingQueue(anchorHeader.ParentHash, nil, chain)
-	if err != nil {
-		return nil, err
-	}
-
-	anchorRatio := queue.commonRatio(anchorQueue)
-	if anchorRatio != nil {
-		// anchor continuity is broken, compare the current link to anchor
-		linkQueue, err := d.getSealingQueue(linkHeader.ParentHash, nil, chain)
-		if err != nil {
-			return nil, err
-		}
-		linkRatio := queue.commonRatio(linkQueue)
-		if linkRatio == nil || linkRatio.Cmp(anchorRatio) > 0 {
-			// link continuity is preserved, or atleast better than anchor continuity
-			anchorData.destHash = parent.MixDigest
-			newAnchor = true
-		}
-		// link continuity is also broken and worse than anchor continuity
-	}
-
-	if !newAnchor {
-		return nil, nil
-	}
-
-	ext := ExtendedData{
-		anchor: &anchorData,
-	}
-	return ext.bytes(), nil
 }
 
 // finalize2 implements consensus.Engine, ensuring no uncles are set, nor block

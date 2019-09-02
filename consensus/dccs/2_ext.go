@@ -21,6 +21,7 @@ import (
 	"errors"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/log"
 )
@@ -173,4 +174,85 @@ func hasAnchorData(header *types.Header) bool {
 	}
 	// link data always at the start of the extended data
 	return header.Extra[extraVanity] == ExtendedDataTypeAnchor
+}
+
+// AnchorData is recorded when the block is a cross-link, which happens when either:
+// + the parent block has sealer application tx(s), or
+// + the new SealingQueue super-majority continuity is broken
+func (d *Dccs) assembleAnchorExtra(parent *types.Header, parents []*types.Header, chain consensus.ChainReader) ([]byte, error) {
+	parentHash := parent.Hash()
+	if a, ok := d.anchorExtraCache.Get(parentHash); ok {
+		// in-memory SealingQueue found
+		ab := a.([]byte)
+		return ab, nil
+	}
+	queue, err := d.getSealingQueue(parentHash, parents, chain)
+	if err != nil {
+		return nil, err
+	}
+
+	if parent.Number.Uint64()+1 == d.config.CoLoaBlock.Uint64() {
+		// special handling for hardfork block
+		anchorData := AnchorData{
+			destHash:      common.Hash{},
+			sealersDigest: queue.sealersDigest(),
+		}
+		ext := ExtendedData{
+			anchor: &anchorData,
+		}
+		return ext.bytes(), nil
+	}
+
+	linkHeader := getLinkDest(parent, parents, chain)
+	anchorHeader, err := d.getAnchorDest(linkHeader, parents, chain)
+	if err != nil {
+		return nil, err
+	}
+
+	anchorData := AnchorData{
+		destHash:      anchorHeader.Hash(),
+		sealersDigest: queue.sealersDigest(),
+	}
+	newAnchor := false
+
+	apps, err := d.fetchSealerApplications(parent, chain)
+	if err != nil {
+		log.Error("failed to get changed sealer from log", "parent", parent.Number, "err", err)
+		return nil, err
+	}
+	// parent block has sealer application tx(s)
+	if len(apps) > 0 {
+		log.Info("sealers", "applications", apps)
+		anchorData.applications = apps
+		newAnchor = true
+	}
+
+	anchorQueue, err := d.getSealingQueue(anchorHeader.ParentHash, parents, chain)
+	if err != nil {
+		return nil, err
+	}
+
+	anchorRatio := queue.commonRatio(anchorQueue)
+	if anchorRatio != nil {
+		// anchor continuity is broken, compare the current link to anchor
+		linkQueue, err := d.getSealingQueue(linkHeader.ParentHash, parents, chain)
+		if err != nil {
+			return nil, err
+		}
+		linkRatio := queue.commonRatio(linkQueue)
+		if linkRatio == nil || linkRatio.Cmp(anchorRatio) > 0 {
+			// link continuity is preserved, or atleast better than anchor continuity
+			anchorData.destHash = parent.MixDigest
+			newAnchor = true
+		}
+		// link continuity is also broken and worse than anchor continuity
+	}
+
+	if !newAnchor {
+		return nil, nil
+	}
+
+	anchorExtra := anchorData.bytes()
+	d.anchorExtraCache.Add(parentHash, anchorExtra)
+	return anchorExtra, nil
 }

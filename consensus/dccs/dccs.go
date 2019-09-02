@@ -148,6 +148,7 @@ type Dccs struct {
 
 	sealingQueueCache *lru.ARCCache // SealingQueue of recent blocks
 	extDataCache      *lru.ARCCache // ExtendedData of recent blocks
+	anchorExtraCache  *lru.ARCCache // Recently assembled anchor extra bytes
 }
 
 // New creates a Dccs proof-of-foundation consensus engine with the initial
