@@ -74,7 +74,7 @@ var _ filters.SimpleBackend = (*logFilterBackend)(nil)
 // fetchSealerApplications filters the block for any joining or leaving sealer.
 // Multiple sealer applications can be confirmed in the same block, the order of
 // the requests kept as is.
-func (d *Dccs) fetchSealerApplications(header *types.Header, chain consensus.ChainReader) ([]sealerApplication, error) {
+func (d *Dccs) fetchSealerApplications(header *types.Header, chain consensus.ChainReader) ([]SealerApplication, error) {
 	logs, err := filters.BlockLogs(header,
 		[]common.Address{d.config.Contract},
 		[][]common.Hash{{joinedTopic, leftTopic}},
@@ -90,12 +90,12 @@ func (d *Dccs) fetchSealerApplications(header *types.Header, chain consensus.Cha
 		return nil, nil
 	}
 
-	applications := make([]sealerApplication, len(logs))
+	applications := make([]SealerApplication, len(logs))
 
 	for i, l := range logs {
 		// len(log.Data) must be 32 * 2 here
 		sealer := common.BytesToAddress(l.Data[32:])
-		applications[i] = sealerApplication{
+		applications[i] = SealerApplication{
 			sealer: sealer,
 		}
 		if l.Topics[0] == joinedTopic {

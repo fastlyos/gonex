@@ -313,9 +313,9 @@ func (d *Dccs) getSealingQueue(parentHash common.Hash, parents []*types.Header, 
 }
 
 // crawl back the sealer applications skip-list
-func (d *Dccs) crawlSealerApplications(header *types.Header, parents []*types.Header, chain consensus.ChainReader) ([]sealerApplication, error) {
+func (d *Dccs) crawlSealerApplications(header *types.Header, parents []*types.Header, chain consensus.ChainReader) ([]SealerApplication, error) {
 	number := header.Number.Uint64()
-	apps := []sealerApplication{}
+	apps := []SealerApplication{}
 	for header := getAvailableHeaderByHash(header.MixDigest, nil, parents, chain); header != nil; header = getAvailableHeaderByHash(header.MixDigest, nil, parents, chain) {
 		log.Error("crawling", "appNumber", header.Number, "appNumber.Hash", header.Hash(), "cross-link", header.MixDigest)
 		if (header.MixDigest == common.Hash{}) {
@@ -336,12 +336,12 @@ func (d *Dccs) crawlSealerApplications(header *types.Header, parents []*types.He
 			log.Error("no sealer application data in header extra", "app number", header.Number, "number", number)
 			return nil, errors.New("no sealer application data in header extra")
 		}
-		extData, err := bytesToExtData(header.Extra[extraVanity : len(header.Extra)-extraSeal])
+		link, _, err := bytesToLinkData(header.Extra[extraVanity : len(header.Extra)-extraSeal])
 		if err != nil {
 			return nil, err
 		}
-		if len(extData.applications) > 0 {
-			apps = append(extData.applications, apps...)
+		if len(link.applications) > 0 {
+			apps = append(link.applications, apps...)
 		}
 	}
 	return apps, nil

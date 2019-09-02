@@ -147,7 +147,7 @@ type Dccs struct {
 	lock   sync.RWMutex   // Protects the signer fields
 
 	sealingQueueCache *lru.ARCCache // sealingQueue of recent blocks
-	extDataCache      *lru.ARCCache // extData of recent blocks
+	extDataCache      *lru.ARCCache // ExtendedData of recent blocks
 }
 
 // New creates a Dccs proof-of-foundation consensus engine with the initial
