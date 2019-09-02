@@ -425,11 +425,20 @@ func (d *Dccs) prepare2(chain consensus.ChainReader, header *types.Header) error
 		return err
 	}
 
-	if !queue.shareSuperMajority(anchorQueue) {
-		// super-majority continuity broken, promote the current link to anchor
-		link.anchorHash = header.MixDigest
-		newLink = true
-		// TODO: handle cases where the link continuity is also broken
+	anchorRatio := queue.commonRatio(anchorQueue)
+	if anchorRatio != nil {
+		// anchor continuity is broken, compare the current link to anchor
+		linkQueue, err := d.getSealingQueue(linkHeader.ParentHash, nil, chain)
+		if err != nil {
+			return err
+		}
+		linkRatio := queue.commonRatio(linkQueue)
+		if linkRatio == nil || linkRatio.Cmp(anchorRatio) > 0 {
+			// link continuity is preserved, or atleast better than anchor continuity
+			link.anchorHash = header.MixDigest
+			newLink = true
+		}
+		// link continuity is also broken and worse than anchor continuity
 	}
 
 	if newLink {

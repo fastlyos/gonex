@@ -20,6 +20,7 @@ package dccs
 import (
 	"bytes"
 	"errors"
+	"math/big"
 	"sort"
 	"sync"
 
@@ -55,7 +56,8 @@ func (q *sealingQueue) sealersDigest() common.Hash {
 	return q.digest
 }
 
-func (q *sealingQueue) shareSuperMajority(r *sealingQueue) bool {
+// weirdly optimized: returns nil when the super majority continuity is preserved
+func (q *sealingQueue) commonRatio(r *sealingQueue) *big.Rat {
 	qLen := len(q.active)
 	rLen := len(r.active)
 	var smaller, larger map[common.Address]struct{}
@@ -71,8 +73,10 @@ func (q *sealingQueue) shareSuperMajority(r *sealingQueue) bool {
 		}
 	}
 	// common should not be less that super majority of both queues
-	common *= 3
-	return common >= qLen*2 && common >= rLen*2
+	if common*3 >= qLen*2 && common*3 >= rLen*2 {
+		return nil
+	}
+	return big.NewRat(int64(common), int64(len(larger)))
 }
 
 // sealerShuffling implements the sort interface to allow sorting a list of addresses
