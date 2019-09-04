@@ -23,6 +23,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 
 	"github.com/ethereum/go-ethereum/common"
 
@@ -122,12 +123,18 @@ func (e *Engine) Generate(seed []byte, iteration uint64, bitSize uint64, stop <-
 		}
 	}
 
-	if err, ok := err.(*exec.ExitError); ok {
-		// verification failed
-		log.Trace("vdf.Generate", "error code", err.Error())
-		return nil, err
-	}
 	if err != nil {
+		status := cmd.ProcessState.Sys().(syscall.WaitStatus)
+		if status.Signaled() && status.Signal() == syscall.SIGKILL {
+			// interrupted, nuffin wong
+			log.Error("vdf.Generate: interrupted")
+			return nil, nil
+		}
+		if err, ok := err.(*exec.ExitError); ok {
+			// verification failed
+			log.Trace("vdf.Generate", "error code", err.Error())
+			return nil, err
+		}
 		// sum ting wong
 		log.Error("vdf.Generate", "error", err)
 		return nil, err
