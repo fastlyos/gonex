@@ -24,31 +24,53 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 )
 
+const (
+	ITERATION_0 uint64 = 123456
+	ITERATION_1 uint64 = 135246
+)
+
+var (
+	input0     = []byte{0x01, 0x02, 0x03, 0x04}
+	input1     = []byte{0x04, 0x03, 0x01, 0x01}
+	iteration0 = ITERATION_0
+	iteration1 = ITERATION_1
+)
+
+func NoCLI() {
+	InitCLI("non-exist") // use the vdf-go instead
+	iteration0 = ITERATION_0 / 20
+	iteration1 = ITERATION_1 / 20
+}
+
 func TestGenerateVerify(t *testing.T) {
-	input := []byte{0x01, 0x02, 0x03, 0x04}
-	iteration := uint64(12345)
 	bitSize := uint64(127)
 	stopCh := make(chan struct{})
-	output, err := Instance().Generate(input, iteration, bitSize, stopCh)
+	output, err := Instance().Generate(input0, iteration0, bitSize, stopCh)
 	if err != nil {
 		t.Error("Error", "err", err)
 		return
 	}
-	if !Instance().Verify(input, output, iteration, bitSize) {
+	if !Instance().Verify(input0, output, iteration0, bitSize) {
 		t.Error("Invalid ouput", "output", common.Bytes2Hex(output))
 	}
 }
 
+func TestGenerateVerifyGo(t *testing.T) {
+	NoCLI()
+	TestGenerateVerify(t)
+}
+
 func TestInterruptedGenerator(t *testing.T) {
-	input := []byte{0x01, 0x02, 0x03, 0x04}
-	iteration := uint64(123456789)
 	bitSize := uint64(127)
 	stopCh := make(chan struct{})
 	go func() {
-		time.Sleep(time.Second)
-		stopCh <- struct{}{}
+		time.Sleep(time.Second / 2)
+		select {
+		case stopCh <- struct{}{}:
+		default:
+		}
 	}()
-	output, err := Instance().Generate(input, iteration, bitSize, stopCh)
+	output, err := Instance().Generate(input0, iteration0, bitSize, stopCh)
 	if err != nil {
 		t.Error("Error", "err", err)
 		return
@@ -56,4 +78,9 @@ func TestInterruptedGenerator(t *testing.T) {
 	if output != nil {
 		t.Error("Invalid ouput", "output", common.Bytes2Hex(output))
 	}
+}
+
+func TestInterruptedGeneratorGo(t *testing.T) {
+	NoCLI()
+	TestInterruptedGenerator(t)
 }
