@@ -44,17 +44,32 @@ type Engine struct {
 // Instance returns the singleton instance of the VDF Engine
 func Instance() *Engine {
 	engineOnce.Do(func() {
-		engine = newEngine()
+		engine = newEngine("vdf-cli")
 	})
 	return engine
 }
 
-func newEngine() *Engine {
-	cli, err := exec.LookPath("vdf-cli")
+// InitCLI inits the instance with the specific cli name.
+// Must be called before any call to Instance() to override the
+// default cli name "vdf-cli".
+// Useful unit test.
+func InitCLI(cliName string) {
+	engineOnce.Do(func() {
+		engine = newEngine(cliName)
+	})
+}
+
+func newEngine(cliName string) *Engine {
+	cli, err := exec.LookPath(cliName)
 	if err != nil {
 		log.Warn("vdf.newEngine", "vdf-cli", "not found")
 	}
 	return &Engine{cli}
+}
+
+// IsCLI returns whether cli is used for this engine
+func (e *Engine) IsCLI() bool {
+	return len(e.cli) > 0
 }
 
 // Verify verifies the generated output against the seed
