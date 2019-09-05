@@ -207,7 +207,7 @@ func (d *Dccs) getSealingQueue(parentHash common.Hash, parents []*types.Header, 
 		queue := q.(*SealingQueue)
 		return queue, nil
 	}
-	log.Error("getSealingQueue", "parentHash", parentHash)
+	log.Trace("getSealingQueue", "parentHash", parentHash)
 	parent := getAvailableHeaderByHash(parentHash, nil, parents, chain)
 	if parent == nil {
 		return nil, errUnknownPreviousSealer
@@ -235,20 +235,17 @@ func (d *Dccs) getSealingQueue(parentHash common.Hash, parents []*types.Header, 
 
 	addRecent := func(sealer common.Address) {
 		if _, exists := queue.recent[sealer]; !exists {
-			log.Error("***", "sealer", sealer)
 			queue.recent[sealer] = struct{}{}
 			recents = append(recents, sealer)
 		}
 	}
 	addActive := func(sealer common.Address) {
 		if _, exists := queue.active[sealer]; !exists {
-			log.Error("+++", "sealer", sealer)
 			queue.active[sealer] = struct{}{}
 		}
 	}
 	remActive := func(sealer common.Address) {
 		if _, exists := queue.active[sealer]; exists {
-			log.Error("---", "sealer", sealer)
 			delete(queue.active, sealer)
 		}
 	}
@@ -300,10 +297,10 @@ func (d *Dccs) getSealingQueue(parentHash common.Hash, parents []*types.Header, 
 	}
 	for _, app := range apps {
 		if app.isJoined() {
-			log.Error("++++++++++ joined")
+			log.Trace("Sealer application", "address", app.sealer, "joined", app.isJoined())
 			addActive(app.sealer)
 		} else {
-			log.Error("---------- left")
+			log.Error("Sealer application", "address", app.sealer, "joined", app.isJoined())
 			remActive(app.sealer)
 		}
 	}
@@ -325,7 +322,7 @@ func (d *Dccs) crawlSealerApplications(header *types.Header, parents []*types.He
 	number := header.Number.Uint64()
 	apps := []SealerApplication{}
 	for header := getAvailableHeaderByHash(header.MixDigest, nil, parents, chain); header != nil; header = getAvailableHeaderByHash(header.MixDigest, nil, parents, chain) {
-		log.Error("crawling", "appNumber", header.Number, "appNumber.Hash", header.Hash(), "cross-link", header.MixDigest)
+		log.Trace("crawling", "appNumber", header.Number, "appNumber.Hash", header.Hash(), "cross-link", header.MixDigest)
 		if (header.MixDigest == common.Hash{}) {
 			// reach the CoLoa hardfork (new genesis)
 			break

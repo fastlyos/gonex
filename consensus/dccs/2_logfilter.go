@@ -101,10 +101,10 @@ func (d *Dccs) fetchSealerApplications(header *types.Header, chain consensus.Cha
 		if l.Topics[0] == joinedTopic {
 			staker := common.BytesToAddress(l.Data[:32])
 			applications[i].action = ExtendedDataTypeSealerJoin
-			log.Error("Sealer joined", "sealer", sealer, "coinbase", staker)
+			log.Trace("Sealer joined", "sealer", sealer, "coinbase", staker)
 		} else {
 			applications[i].action = ExtendedDataTypeSealerLeave
-			log.Error("Sealer left", "sealer", sealer)
+			log.Trace("Sealer left", "sealer", sealer)
 		}
 	}
 	return applications, nil
