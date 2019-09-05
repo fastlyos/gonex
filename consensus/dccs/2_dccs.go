@@ -40,7 +40,7 @@ import (
 const (
 	inmemorySealingQueues = 16
 	inmemoryExtDatas      = 16
-	inmemoryAnchorExtras  = 4
+	inmemoryAnchorExtras  = 16
 	randomSeedSize        = 32
 	randomSeedIteration   = 1567890 // for vdf-cli, 127 bit, 10s
 )
