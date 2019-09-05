@@ -85,20 +85,49 @@ func (e *Engine) Verify(seed, output []byte, iteration uint64, bitSize uint64) (
 
 // Generate generates the vdf output = (y, proof)
 func (e *Engine) Generate(seed []byte, iteration uint64, bitSize uint64, stop <-chan struct{}) (output []byte, err error) {
-	if len(e.cli) == 0 {
-		defer func() {
-			if x := recover(); x != nil {
-				log.Error("vdf.Generate: generation process panic", "reason", x)
-				err = fmt.Errorf("%v", x)
+	if len(e.cli) > 0 {
+		return e.generateCLI(seed, iteration, bitSize, stop)
+	}
+	defer func() {
+		if x := recover(); x != nil {
+			log.Error("vdf.Generate: generation process panic", "reason", x)
+			err = fmt.Errorf("%v", x)
+		}
+	}()
+	blockingStop := make(chan struct{})
+	var done chan struct{}
+	if stop != nil {
+		// always-listen adapter for blocking stop chan
+		done = make(chan struct{})
+		go func() {
+			select {
+			case <-stop:
+				log.Trace("vdf.Generate: vdf-go interrupted")
+				blockingStop <- struct{}{}
+				return
+			case <-done:
+				log.Trace("vdf.Generate: vdf-go done")
+				return
 			}
 		}()
-		y, proof := vdf_go.GenerateVDFWithStopChan(seed, int(iteration), int(bitSize), stop)
-		if y == nil || proof == nil {
-			return nil, nil
+	}
+	y, proof := vdf_go.GenerateVDFWithStopChan(seed, int(iteration), int(bitSize), blockingStop)
+
+	if stop != nil && done != nil {
+		// release the stopping goroutine above
+		select {
+		case done <- struct{}{}:
+		default:
 		}
-		return append(y, proof...), nil
 	}
 
+	if y == nil || proof == nil {
+		return nil, nil
+	}
+	return append(y, proof...), nil
+}
+
+func (e *Engine) generateCLI(seed []byte, iteration uint64, bitSize uint64, stop <-chan struct{}) (output []byte, err error) {
 	cmd := exec.Command(e.cli,
 		"-l"+strconv.Itoa(int(bitSize)),
 		common.Bytes2Hex(seed),
