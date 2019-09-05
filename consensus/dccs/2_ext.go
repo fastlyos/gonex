@@ -18,6 +18,7 @@
 package dccs
 
 import (
+	"bytes"
 	"errors"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -37,6 +38,7 @@ var (
 // structures and/or versions of RLP can be decoded from the extra bytes.
 const (
 	ExtendedDataTypeNone        byte = 0x00
+	ExtendedDataTypeVDF         byte = 0x01
 	ExtendedDataTypeSealerJoin  byte = 0xF0
 	ExtendedDataTypeSealerLeave byte = 0xF1
 	ExtendedDataTypeAnchor      byte = 0xFF
@@ -45,12 +47,81 @@ const (
 // ExtendedData is the data encoded in header.Extra[extraVanity:-extraSeal]
 type ExtendedData struct {
 	anchor *AnchorData // always comes first
+	random RandomData
 }
 
-type AnchorData struct {
-	destHash      common.Hash         // hash of the anchor destination block
-	sealersDigest common.Hash         // digest of the ordered active sealer for this block
-	applications  []SealerApplication // sealer applications confirmed in the parent block
+func (e *ExtendedData) bytes() []byte {
+	if e == nil {
+		return []byte{}
+	}
+	var bytes []byte
+	bytes = append(bytes, e.anchor.bytes()...)
+	return bytes
+}
+
+func getExtDataFromExtra(extBytes []byte) (*ExtendedData, error) {
+	anchorData, n, err := anchorDataFromExtraBytes(extBytes)
+	if err != nil {
+		return nil, err
+	}
+	extBytes = extBytes[n:]
+	vdfOutput, n := getRandomDataFromExtra(extBytes)
+	extBytes = extBytes[n:]
+	extData := ExtendedData{
+		anchor: anchorData,
+		random: vdfOutput,
+	}
+	return &extData, nil
+}
+
+func (d *Dccs) getExtData(header *types.Header) (*ExtendedData, error) {
+	if len(header.Extra) <= extraVanity+extraSeal {
+		return nil, nil
+	}
+	hash := header.Hash()
+	if e, ok := d.extDataCache.Get(hash); ok {
+		// in-memory SealingQueue found
+		ed := e.(*ExtendedData)
+		return ed, nil
+	}
+	ext, err := getExtDataFromExtra(header.Extra[extraVanity : len(header.Extra)-extraSeal])
+	if err != nil || ext == nil {
+		return nil, err
+	}
+	d.extDataCache.Add(hash, ext)
+	return ext, nil
+}
+
+type RandomData []byte
+
+func getRandomDataFromExtra(extra []byte) (RandomData, int) {
+	size := len(extra)
+	if size == 0 {
+		return nil, 0
+	}
+	if size < 1+randomSeedSize {
+		return nil, 0
+	}
+	if extra[0] != ExtendedDataTypeVDF {
+		return nil, 0
+	}
+	output := extra[1 : 1+randomSeedSize]
+	return append(output[:0:0], output...), 1 + randomSeedSize
+}
+
+func (r RandomData) bytes() []byte {
+	if len(r) > 0 {
+		return append([]byte{ExtendedDataTypeVDF}, r...)
+	}
+	return nil
+}
+
+func (d *Dccs) getRandomData(header *types.Header) (RandomData, error) {
+	extData, err := d.getExtData(header)
+	if err != nil {
+		return nil, err
+	}
+	return extData.random, nil
 }
 
 // SealerApplication packs the sealer address and its application action.
@@ -61,6 +132,12 @@ type SealerApplication struct {
 
 func (a *SealerApplication) isJoined() bool {
 	return a.action == ExtendedDataTypeSealerJoin
+}
+
+type AnchorData struct {
+	destHash      common.Hash         // hash of the anchor destination block
+	sealersDigest common.Hash         // digest of the ordered active sealer for this block
+	applications  []SealerApplication // sealer applications confirmed in the parent block
 }
 
 func (e *AnchorData) bytes() []byte {
@@ -80,7 +157,7 @@ func (e *AnchorData) bytes() []byte {
 	return extra
 }
 
-func bytesToAnchorData(extra []byte) (*AnchorData, int, error) {
+func anchorDataFromExtraBytes(extra []byte) (*AnchorData, int, error) {
 	size := len(extra)
 	if size == 0 {
 		return nil, 0, nil
@@ -116,42 +193,18 @@ func bytesToAnchorData(extra []byte) (*AnchorData, int, error) {
 	return &anchorData, size, nil
 }
 
-func (e *ExtendedData) bytes() []byte {
-	if e == nil {
-		return []byte{}
+func verifyAnchorBytes(extBytes []byte, expectedAnchorBytes []byte) error {
+	n := len(expectedAnchorBytes)
+	if len(extBytes) < n {
+		return errInvalidExtendedDataLength
 	}
-	var bytes []byte
-	bytes = append(bytes, e.anchor.bytes()...)
-	return bytes
-}
-
-func bytesToExtData(extra []byte) (*ExtendedData, error) {
-	anchorData, _, err := bytesToAnchorData(extra)
-	if err != nil {
-		return nil, err
+	if n > 0 {
+		// anchor data always comes first in the extended extra
+		if bytes.Compare(extBytes[:n], expectedAnchorBytes) != 0 {
+			return errInvalidExtendedData
+		}
 	}
-	extData := ExtendedData{
-		anchor: anchorData,
-	}
-	return &extData, nil
-}
-
-func (d *Dccs) getExtData(header *types.Header) (*ExtendedData, error) {
-	if len(header.Extra) <= extraVanity+extraSeal {
-		return nil, nil
-	}
-	hash := header.Hash()
-	if e, ok := d.extDataCache.Get(hash); ok {
-		// in-memory SealingQueue found
-		ed := e.(*ExtendedData)
-		return ed, nil
-	}
-	ext, err := bytesToExtData(header.Extra[extraVanity : len(header.Extra)-extraSeal])
-	if err != nil || ext == nil {
-		return nil, err
-	}
-	d.extDataCache.Add(hash, ext)
-	return ext, nil
+	return nil
 }
 
 func (d *Dccs) getAnchorData(header *types.Header) (*AnchorData, error) {

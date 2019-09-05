@@ -216,10 +216,14 @@ func (d *Dccs) getSealingQueue(parentHash common.Hash, parents []*types.Header, 
 	if err != nil {
 		return nil, err
 	}
+	randomData, err := d.getChainRandomSeed(parent, nil, parents, chain)
+	if err != nil {
+		return nil, err
+	}
 	queue := SealingQueue{
 		hash:   parentHash,
 		sealer: sealer,
-		seed:   parent.Nonce[:],
+		seed:   randomData,
 		active: map[common.Address]struct{}{},
 		recent: map[common.Address]struct{}{},
 	}
@@ -340,7 +344,7 @@ func (d *Dccs) crawlSealerApplications(header *types.Header, parents []*types.He
 			log.Error("no sealer application data in header extra", "app number", header.Number, "number", number)
 			return nil, errors.New("no sealer application data in header extra")
 		}
-		link, _, err := bytesToAnchorData(header.Extra[extraVanity : len(header.Extra)-extraSeal])
+		link, _, err := anchorDataFromExtraBytes(header.Extra[extraVanity : len(header.Extra)-extraSeal])
 		if err != nil {
 			return nil, err
 		}

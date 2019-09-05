@@ -31,6 +31,7 @@ import (
 	"github.com/ethereum/go-ethereum/consensus/misc"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/core/vdf"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/log"
 	lru "github.com/hashicorp/golang-lru"
@@ -40,13 +41,17 @@ const (
 	inmemorySealingQueues = 16
 	inmemoryExtDatas      = 16
 	inmemoryAnchorExtras  = 4
+	randomSeedSize        = 32
+	randomSeedIteration   = 1567890 // for vdf-cli, 127 bit, 10s
 )
 
 var (
-	errInvalidNonce              = errors.New("Invalid block nonce as distant from the last sealer application block")
+	errInvalidNonce              = errors.New("Invalid block nonce as distant from the last seed block")
 	errUnknownPreviousSealer     = errors.New("Unknown previous block sealer")
 	errInvalidExtendedDataLength = errors.New("Invalid extended data length")
-	errExtendedDataMismatch      = errors.New("Extended data does not matches")
+	errInvalidExtendedData       = errors.New("Extended data does not matches")
+	errInvalidRandomData         = errors.New("Invalid random data in extra data")
+	errInvalidRandomDataSize     = errors.New("Invalid random data size from relayer")
 )
 
 // Init the second hardfork of DCCS consensus
@@ -55,6 +60,7 @@ func (d *Dccs) init2() *Dccs {
 	d.sealingQueueCache, _ = lru.NewARC(inmemorySealingQueues)
 	d.extDataCache, _ = lru.NewARC(inmemoryExtDatas)
 	d.anchorExtraCache, _ = lru.NewARC(inmemoryAnchorExtras)
+	d.queueShuffler = vdf.NewDelayer(randomSeedSize)
 	return d
 }
 
@@ -101,18 +107,11 @@ func (d *Dccs) verifyHeader2(chain consensus.ChainReader, header *types.Header, 
 	return d.verifyCascadingFields2(chain, header, parents)
 }
 
-func (d *Dccs) getBlockNonce(number *big.Int, parent *types.Header) types.BlockNonce {
-	if d.config.CoLoaBlock.Cmp(number) == 0 {
+func (d *Dccs) getBlockNonce(parent *types.Header) types.BlockNonce {
+	if parent.Number.Uint64()+1 == d.config.CoLoaBlock.Uint64() {
 		return types.BlockNonce{}
 	}
-	nonce := parent.Nonce
-	b := parent.Hash().Bytes()[:8]
-	if b[0] < 256/16 {
-		// change the nonce once in 16 blocks, probabilistically
-		copy(nonce[:], b)
-		log.Trace("New random seed", "nonce", nonce)
-	}
-	return nonce
+	return types.EncodeNonce(parent.Nonce.Uint64() + 1)
 }
 
 // verifyCascadingFields2 verifies all the header fields that are not standalone,
@@ -134,13 +133,6 @@ func (d *Dccs) verifyCascadingFields2(chain consensus.ChainReader, header *types
 		return ErrInvalidTimestamp
 	}
 
-	// verify the random seed
-	nonce := d.getBlockNonce(header.Number, parent)
-	if header.Nonce != nonce {
-		log.Error("invalid nonce", "expected", nonce, "actual", header.Nonce)
-		return errInvalidNonce
-	}
-
 	// verify the cross-link reference to the last sealer application block
 	var expectedMixDigest common.Hash
 	if d.config.CoLoaBlock.Cmp(header.Number) == 0 {
@@ -159,17 +151,38 @@ func (d *Dccs) verifyCascadingFields2(chain consensus.ChainReader, header *types
 	if err != nil {
 		return err
 	}
-	expectedAnchorBytesLength := len(expectedAnchorBytes)
-
 	extBytes := header.Extra[extraVanity : len(header.Extra)-extraSeal]
-	if len(extBytes) < expectedAnchorBytesLength {
-		return errInvalidExtendedDataLength
+	err = verifyAnchorBytes(extBytes, expectedAnchorBytes)
+	if err != nil {
+		return err
 	}
-	if expectedAnchorBytesLength > 0 {
-		// anchor data always comes first in the extended extra
-		if bytes.Compare(extBytes[:expectedAnchorBytesLength], expectedAnchorBytes) != 0 {
-			return errExtendedDataMismatch
+	extBytes = extBytes[len(expectedAnchorBytes):]
+	randomData, n := getRandomDataFromExtra(extBytes)
+
+	// reset the seed block ref on valid vdf output
+	nonce := types.BlockNonce{}
+	if len(randomData) > 0 {
+		if len(randomData) != randomSeedSize {
+			return errInvalidRandomDataSize
 		}
+		// Verify VDF ouput here
+		seed := d.getChainRandomInput(parent, header, parents, chain)
+		if !d.queueShuffler.Verify(seed[:], randomData, randomSeedIteration) {
+			return errInvalidRandomData
+		}
+		// request the new value immediately
+		seed = parent.Hash()
+		d.queueShuffler.Request(seed[:], randomSeedIteration)
+	} else {
+		nonce = d.getBlockNonce(parent)
+	}
+	extBytes = extBytes[n:]
+	// TODO: verify price value in extBytes here
+
+	// verify the seed block ref
+	if header.Nonce != nonce {
+		log.Error("invalid nonce as seed ref", "want", nonce, "have", header.Nonce)
+		return errInvalidNonce
 	}
 
 	// All basic checks passed, verify the seal and return
@@ -232,6 +245,29 @@ func getAvailableHeaderByHash(hash common.Hash, header *types.Header, parents []
 		}
 	}
 	return nil
+}
+
+func (d *Dccs) getChainRandomHeader(parent *types.Header, header *types.Header, parents []*types.Header, chain consensus.ChainReader) *types.Header {
+	seedNumber := parent.Number.Uint64() - parent.Nonce.Uint64()
+	return getAvailableHeader(seedNumber, header, parents, chain)
+}
+
+func (d *Dccs) getChainRandomInput(parent *types.Header, header *types.Header, parents []*types.Header, chain consensus.ChainReader) common.Hash {
+	seedHeader := d.getChainRandomHeader(parent, header, parents, chain)
+	return seedHeader.Hash()
+}
+
+func (d *Dccs) getChainRandomSeed(parent *types.Header, header *types.Header, parents []*types.Header, chain consensus.ChainReader) (RandomData, error) {
+	seedHeader := d.getChainRandomHeader(parent, header, parents, chain)
+	if d.config.CoLoaBlock.Cmp(seedHeader.Number) == 0 {
+		// use the sealer digest for hardfork block
+		anchorData, err := d.getAnchorData(seedHeader)
+		if err != nil {
+			return nil, err
+		}
+		return anchorData.sealersDigest[:], nil
+	}
+	return d.getRandomData(seedHeader)
 }
 
 func getLinkDest(header *types.Header, parents []*types.Header, chain consensus.ChainReader) *types.Header {
@@ -316,9 +352,6 @@ func (d *Dccs) prepare2(chain consensus.ChainReader, header *types.Header) error
 		return consensus.ErrUnknownAncestor
 	}
 
-	// record the distant from the last sealer application block
-	header.Nonce = d.getBlockNonce(header.Number, parent)
-
 	d.prepareBeneficiary2(header, chain)
 
 	queue, err := d.getSealingQueue(header.ParentHash, nil, chain)
@@ -351,12 +384,26 @@ func (d *Dccs) prepare2(chain consensus.ChainReader, header *types.Header) error
 		return err
 	}
 
+	seedHash := d.getChainRandomInput(parent, nil, nil, chain)
+	randomData := RandomData(d.queueShuffler.Peek(seedHash[:], randomSeedIteration))
+	if len(randomData) > 0 {
+		log.Trace("prepare2", "vdfOutput", common.Bytes2Hex(randomData))
+		if len(randomData) != randomSeedSize {
+			return errInvalidRandomDataSize
+		}
+		header.Nonce = types.BlockNonce{}
+	} else {
+		// record the distant from the last sealer application block
+		header.Nonce = d.getBlockNonce(parent)
+	}
+
 	// Prepare the start of the header.Extra
 	if len(header.Extra) < extraVanity {
 		header.Extra = append(header.Extra, bytes.Repeat([]byte{0x00}, extraVanity-len(header.Extra))...)
 	}
 	header.Extra = header.Extra[:extraVanity]
 	header.Extra = append(header.Extra, anchorBytes...)
+	header.Extra = append(header.Extra, randomData.bytes()...)
 	header.Extra = append(header.Extra, make([]byte, extraSeal)...)
 	return nil
 }

@@ -33,6 +33,7 @@ import (
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/core/vdf"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
@@ -149,6 +150,8 @@ type Dccs struct {
 	sealingQueueCache *lru.ARCCache // SealingQueue of recent blocks
 	extDataCache      *lru.ARCCache // ExtendedData of recent blocks
 	anchorExtraCache  *lru.ARCCache // Recently assembled anchor extra bytes
+
+	queueShuffler *vdf.Delayer // Delayer for sealer shuffling seed
 }
 
 // New creates a Dccs proof-of-foundation consensus engine with the initial
