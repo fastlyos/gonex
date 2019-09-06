@@ -63,7 +63,7 @@ func InitCLI(cliName string) {
 func newEngine(cliName string) *Engine {
 	cli, err := exec.LookPath(cliName)
 	if err != nil {
-		log.Warn("vdf.newEngine", "vdf-cli", "not found")
+		log.Warn("vdf.newEngine", cliName, "not found")
 	}
 	return &Engine{cli}
 }
