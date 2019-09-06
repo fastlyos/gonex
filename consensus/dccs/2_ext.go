@@ -285,20 +285,24 @@ func (d *Dccs) assembleAnchorExtra(parent *types.Header, parents []*types.Header
 		return nil, err
 	}
 
-	anchorRatio := queue.commonRatio(anchorQueue)
-	if anchorRatio != nil {
+	anchorRatio, broken := queue.commonRatio(anchorQueue)
+	if broken {
+		log.Info("Anchor continuity is broken", "anchor ratio", anchorRatio.RatString(), "anchor number", anchorHeader.Number)
 		// anchor continuity is broken, compare the current link to anchor
 		linkQueue, err := d.getSealingQueue(linkHeader.ParentHash, parents, chain)
 		if err != nil {
 			return nil, err
 		}
-		linkRatio := queue.commonRatio(linkQueue)
-		if linkRatio == nil || linkRatio.Cmp(anchorRatio) > 0 {
+		linkRatio, broken := queue.commonRatio(linkQueue)
+		if !broken || linkRatio.Cmp(anchorRatio) > 0 {
 			// link continuity is preserved, or atleast better than anchor continuity
+			log.Info("Link is promoted to Anchor", "link ratio", linkRatio.RatString(), "link number", linkHeader.Number)
 			anchorData.destHash = parent.MixDigest
 			newAnchor = true
+		} else {
+			// link continuity is also broken and worse than anchor continuity
+			log.Warn("Broken anchor has no better alternative", "link ratio", linkRatio.RatString())
 		}
-		// link continuity is also broken and worse than anchor continuity
 	}
 
 	if !newAnchor {

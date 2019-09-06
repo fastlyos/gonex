@@ -56,8 +56,8 @@ func (q *SealingQueue) sealersDigest() common.Hash {
 	return q.digest
 }
 
-// weirdly optimized: returns nil when the super majority continuity is preserved
-func (q *SealingQueue) commonRatio(r *SealingQueue) *big.Rat {
+// return the common least ratio, and whether the continuity is broken
+func (q *SealingQueue) commonRatio(r *SealingQueue) (*big.Rat, bool) {
 	qLen := len(q.active)
 	rLen := len(r.active)
 	var smaller, larger map[common.Address]struct{}
@@ -72,11 +72,10 @@ func (q *SealingQueue) commonRatio(r *SealingQueue) *big.Rat {
 			common++
 		}
 	}
+	ratio := big.NewRat(int64(common), int64(len(larger)))
 	// common should not be less that super majority of both queues
-	if common*3 >= qLen*2 && common*3 >= rLen*2 {
-		return nil
-	}
-	return big.NewRat(int64(common), int64(len(larger)))
+	broken := common*3 < qLen*2 || common*3 < rLen*2
+	return ratio, broken
 }
 
 // sealerShuffling implements the sort interface to allow sorting a list of addresses
