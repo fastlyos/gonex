@@ -151,7 +151,8 @@ type Dccs struct {
 	extDataCache      *lru.ARCCache // ExtendedData of recent blocks
 	anchorExtraCache  *lru.ARCCache // Recently assembled anchor extra bytes
 
-	queueShuffler *vdf.Delayer // Delayer for sealer shuffling seed
+	queueShuffler     *vdf.Delayer // Delayer for sealer shuffling seed
+	queueShufflerOnce sync.Once    // Lazy initilization for queueShuffler
 }
 
 // New creates a Dccs proof-of-foundation consensus engine with the initial

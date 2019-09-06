@@ -121,6 +121,9 @@ func (d *Dccs) getRandomData(header *types.Header) (RandomData, error) {
 	if err != nil {
 		return nil, err
 	}
+	if extData == nil {
+		return nil, nil
+	}
 	return extData.random, nil
 }
 

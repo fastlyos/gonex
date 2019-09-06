@@ -166,13 +166,11 @@ func (d *Dccs) verifyCascadingFields2(chain consensus.ChainReader, header *types
 			return errInvalidRandomDataSize
 		}
 		// Verify VDF ouput here
-		seed := d.getChainRandomInput(parent, header, parents, chain)
-		if !d.queueShuffler.Verify(seed[:], randomData, randomSeedIteration) {
+		input := d.getChainRandomInput(parent, header, parents, chain)
+		if !d.queueShuffler.Verify(input[:], randomData, randomSeedIteration) {
 			return errInvalidRandomData
 		}
-		// request the new value immediately
-		seed = parent.Hash()
-		d.queueShuffler.Request(seed[:], randomSeedIteration)
+		log.Info("New random data received", "random data", common.Bytes2Hex(randomData))
 	} else {
 		nonce = d.getBlockNonce(parent)
 	}
@@ -352,6 +350,20 @@ func (d *Dccs) prepare2(chain consensus.ChainReader, header *types.Header) error
 		return consensus.ErrUnknownAncestor
 	}
 
+	// request the new vdf calculation after each zero block nonce
+	if parent.Nonce == (types.BlockNonce{}) {
+		input := parent.Hash()
+		log.Info("Requesting for new random seed calculation", "input", input)
+		d.queueShuffler.Request(input[:], randomSeedIteration)
+	} else {
+		// request the first VDF task after the node started
+		d.queueShufflerOnce.Do(func() {
+			input := d.getChainRandomInput(parent, nil, nil, chain)
+			log.Info("Requesting for random seed calculation", "input", input)
+			d.queueShuffler.Request(input[:], randomSeedIteration)
+		})
+	}
+
 	d.prepareBeneficiary2(header, chain)
 
 	queue, err := d.getSealingQueue(header.ParentHash, nil, chain)
@@ -384,8 +396,8 @@ func (d *Dccs) prepare2(chain consensus.ChainReader, header *types.Header) error
 		return err
 	}
 
-	seedHash := d.getChainRandomInput(parent, nil, nil, chain)
-	randomData := RandomData(d.queueShuffler.Peek(seedHash[:], randomSeedIteration))
+	input := d.getChainRandomInput(parent, nil, nil, chain)
+	randomData := RandomData(d.queueShuffler.Peek(input[:], randomSeedIteration))
 	if len(randomData) > 0 {
 		log.Trace("prepare2", "vdfOutput", common.Bytes2Hex(randomData))
 		if len(randomData) != randomSeedSize {
