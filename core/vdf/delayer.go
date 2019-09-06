@@ -177,8 +177,7 @@ func (d *Delayer) loop() {
 					select {
 					case resCh <- output:
 					default:
-						// no more listener to broadcast
-						break
+						return // no more listener to broadcast
 					}
 				}
 			}(t, resCh)
