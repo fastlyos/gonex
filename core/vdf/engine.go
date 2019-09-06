@@ -20,6 +20,7 @@ package vdf
 import (
 	"fmt"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -110,6 +111,8 @@ func (e *Engine) Generate(seed []byte, iteration uint64, bitSize uint64, stop <-
 				return
 			}
 		}()
+		// give channel listening routine a chance to run first
+		runtime.Gosched()
 	}
 	y, proof := vdf_go.GenerateVDFWithStopChan(seed, int(iteration), int(bitSize), blockingStop)
 
@@ -141,8 +144,24 @@ func (e *Engine) generateCLI(seed []byte, iteration uint64, bitSize uint64, stop
 		go func() {
 			select {
 			case <-stop:
-				if cmd == nil || cmd.Process == nil {
+				if cmd == nil {
 					return
+				}
+				if cmd.Process == nil {
+					// process is signaled to kill before it's even started
+					if !func() bool {
+						for i := 0; i < 1000000; i++ {
+							// yeild and wait for process to start first
+							runtime.Gosched()
+							if cmd.Process != nil {
+								return true
+							}
+						}
+						return false
+					}() {
+						log.Info("vdf.Generate: non-exist vdf-cli interrupted")
+						return
+					}
 				}
 				log.Trace("vdf.Generate: vdf-cli interrupted")
 				if err := cmd.Process.Kill(); err != nil {
@@ -154,6 +173,8 @@ func (e *Engine) generateCLI(seed []byte, iteration uint64, bitSize uint64, stop
 				return
 			}
 		}()
+		// give channel listening routine a chance to run first
+		runtime.Gosched()
 	}
 
 	log.Trace("vdf.Generate", "seed", common.Bytes2Hex(seed), "iteration", iteration, "output", common.Bytes2Hex(output))
@@ -168,11 +189,13 @@ func (e *Engine) generateCLI(seed []byte, iteration uint64, bitSize uint64, stop
 	}
 
 	if err != nil {
-		status := cmd.ProcessState.Sys().(syscall.WaitStatus)
-		if status.Signaled() && status.Signal() == syscall.SIGKILL {
-			// interrupted, nuffin wong
-			log.Error("vdf.Generate: interrupted")
-			return nil, nil
+		if cmd.ProcessState != nil {
+			status := cmd.ProcessState.Sys().(syscall.WaitStatus)
+			if status.Signaled() && status.Signal() == syscall.SIGKILL {
+				// interrupted, nuffin wong
+				log.Error("vdf.Generate: interrupted")
+				return nil, nil
+			}
 		}
 		if err, ok := err.(*exec.ExitError); ok {
 			// verification failed

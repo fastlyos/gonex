@@ -20,8 +20,9 @@ package vdf
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
+	"runtime"
 	"sync"
-	"time"
 
 	lru "github.com/hashicorp/golang-lru"
 
@@ -162,6 +163,7 @@ func (d *Delayer) loop() {
 				defer close(resCh)
 				if err != nil {
 					log.Error("Delayer: VDF worker loop failed", "err", err)
+					fmt.Printf("Delayer: VDF worker loop failed, err=%v\n", err)
 					return
 				}
 				if len(output) == 0 {
@@ -181,7 +183,7 @@ func (d *Delayer) loop() {
 				}
 			}(t, resCh)
 			// give the forked worker a chance to start first
-			time.Sleep(time.Millisecond)
+			runtime.Gosched()
 		}
 	}
 }
