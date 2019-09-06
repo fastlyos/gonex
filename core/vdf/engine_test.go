@@ -84,3 +84,24 @@ func TestInterruptedGeneratorGo(t *testing.T) {
 	NoCLI()
 	TestInterruptedGenerator(t)
 }
+
+func TestLeak(t *testing.T) {
+	for i := uint64(1); i < iteration0/300; i++ {
+		output, err := Instance().Generate(input0, i, 127, nil)
+		if err != nil {
+			t.Error("error", "err", err)
+		}
+		if output != nil {
+			if Instance().Verify(input0, output, i, 127) {
+				t.Log("success", "output", common.Bytes2Hex(output))
+			} else {
+				t.Error("failed", "output", common.Bytes2Hex(output))
+			}
+		}
+	}
+}
+
+func TestLeakGo(t *testing.T) {
+	NoCLI()
+	TestLeak(t)
+}

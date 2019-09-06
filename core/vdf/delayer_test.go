@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/fortytw2/leaktest"
 )
 
 func TestOutput(t *testing.T) {
@@ -250,4 +251,24 @@ func TestRequest(t *testing.T) {
 func TestRequestGo(t *testing.T) {
 	NoCLI()
 	TestRequest(t)
+}
+
+func TestLeakage(t *testing.T) {
+	defer leaktest.Check(t)()
+	delayer := NewDelayer(32)
+	for i := uint64(1); i < iteration0/1000; i++ {
+		output := delayer.Get(input0, i)
+		if output != nil {
+			if delayer.Verify(input0, output, i) {
+				t.Log("success", "output", common.Bytes2Hex(output))
+			} else {
+				t.Error("failed", "output", common.Bytes2Hex(output))
+			}
+		}
+	}
+}
+
+func TestLeakageGo(t *testing.T) {
+	NoCLI()
+	TestLeakage(t)
 }
