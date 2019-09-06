@@ -44,14 +44,50 @@ type SealingQueue struct {
 	digestOnce sync.Once
 }
 
+// note: passed array will be overriden
+func merkleHash(leafs [][]byte) common.Hash {
+	hasher := sha3.NewLegacyKeccak256()
+	zero := common.Hash{}
+	for len(leafs) > 1 {
+		oL := len(leafs)
+		nL := oL - oL/2
+		for i := 0; i < nL; i++ {
+			hasher.Reset()
+			a := i * 2
+			hasher.Write(leafs[a])
+			// fmt.Printf("a = %x\n", leafs[a])
+			b := a + 1
+			if b < oL {
+				hasher.Write(leafs[b])
+				// fmt.Printf("b = %x\n", leafs[b])
+			} else {
+				// fmt.Printf("zero: %x, leafs[a]: %x\n", zero[:], leafs[a])
+				hasher.Write(zero[:len(leafs[a])])
+				// fmt.Printf("0 = %x\n", zero[:len(leafs[a])])
+			}
+			leafs[i] = hasher.Sum(nil)
+			// fmt.Printf("a+b: %x\n", leafs[i])
+		}
+		leafs = leafs[:nL:nL]
+	}
+	return common.BytesToHash(leafs[0])
+}
+
+// bytesAscending implements the sort interface to allow sorting a list of byte slice
+type bytesAscending [][]byte
+
+func (s bytesAscending) Len() int           { return len(s) }
+func (s bytesAscending) Less(i, j int) bool { return bytes.Compare(s[i], s[j]) < 0 }
+func (s bytesAscending) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
+
 func (q *SealingQueue) sealersDigest() common.Hash {
 	q.digestOnce.Do(func() {
-		active := make([]common.Address, 0, len(q.active))
+		active := make([][]byte, 0, len(q.active))
 		for adr := range q.active {
-			active = append(active, adr)
+			active = append(active, adr[:])
 		}
-		sort.Sort(signersAscending(active))
-		q.digest = types.RLPHash(active)
+		sort.Sort(bytesAscending(active))
+		q.digest = merkleHash(active)
 	})
 	return q.digest
 }
