@@ -266,8 +266,7 @@ func (d *Dccs) assembleAnchorExtra(parent *types.Header, parents []*types.Header
 	}
 
 	anchorData := AnchorData{
-		destHash:      anchorHeader.Hash(),
-		sealersDigest: queue.sealersDigest(),
+		destHash: anchorHeader.Hash(),
 	}
 	newAnchor := false
 
@@ -311,6 +310,9 @@ func (d *Dccs) assembleAnchorExtra(parent *types.Header, parents []*types.Header
 	if !newAnchor {
 		return nil, nil
 	}
+
+	// only calculate sealersDigest when nessesary
+	anchorData.sealersDigest = queue.sealersDigest()
 
 	anchorExtra := anchorData.bytes()
 	d.anchorExtraCache.Add(parentHash, anchorExtra)
