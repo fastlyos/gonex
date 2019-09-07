@@ -44,6 +44,14 @@ type SealingQueue struct {
 	digestOnce sync.Once
 }
 
+func addressesHash(adrs []common.Address) common.Hash {
+	hasher := sha3.NewLegacyKeccak256()
+	for _, adr := range adrs {
+		hasher.Write(adr[:])
+	}
+	return common.BytesToHash(hasher.Sum(nil))
+}
+
 func (q *SealingQueue) sealersDigest() common.Hash {
 	q.digestOnce.Do(func() {
 		active := make([]common.Address, 0, len(q.active))
@@ -51,7 +59,7 @@ func (q *SealingQueue) sealersDigest() common.Hash {
 			active = append(active, adr)
 		}
 		sort.Sort(signersAscending(active))
-		q.digest = types.RLPHash(active)
+		q.digest = addressesHash(active)
 	})
 	return q.digest
 }
