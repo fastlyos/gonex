@@ -391,8 +391,9 @@ type DccsConfig struct {
 	ThangLongEpoch uint64   `json:"thangLongEpoch"`           // Epoch length to reset votes and checkpoint
 	// CoLoa hardfork
 	CoLoaBlock              *big.Int `json:"coLoaBlock,omitempty"`
-	LeakDuration            uint64   `json:"leakDuration,omitempty` // Inactivity leak duration in blocks
-	ApplicationConfirmation uint64   `json:"applicationConfirmation,omitempty`
+	LeakDuration            uint64   `json:"leakDuration,omitempty"` // Inactivity leak duration in blocks
+	ApplicationConfirmation uint64   `json:"applicationConfirmation,omitempty"`
+	RandomSeedIteration     uint64   `json:"randomSeedIteration,omitempty"`
 }
 
 // PositionInEpoch returns the offset of a block from the start of an epoch
@@ -428,13 +429,14 @@ func (c *DccsConfig) Snapshot(number uint64) uint64 {
 
 // String implements the stringer interface, returning the consensus engine details.
 func (c *DccsConfig) String() string {
-	return fmt.Sprintf("dccs {ThangLong: %v Epoch: %v Contract: %v CoLoa: %v LeakDuration: %v ApplicationConfirmation: %v}",
+	return fmt.Sprintf("dccs {ThangLong: %v Epoch: %v Contract: %v CoLoa: %v LeakDuration: %v ApplicationConfirmation: %v RandomSeedIteration: %v}",
 		c.ThangLongBlock,
 		c.ThangLongEpoch,
 		c.Contract.String(),
 		c.CoLoaBlock,
 		c.LeakDuration,
 		c.ApplicationConfirmation,
+		c.RandomSeedIteration,
 	)
 }
 

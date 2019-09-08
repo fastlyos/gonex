@@ -42,7 +42,6 @@ const (
 	inmemoryExtDatas      = 16
 	inmemoryAnchorExtras  = 16
 	randomSeedSize        = 32
-	randomSeedIteration   = 1567890 // for vdf-cli, 127 bit, 10s
 )
 
 var (
@@ -177,7 +176,7 @@ func (c *Context) verifyCascadingFields2() error {
 		}
 		// Verify VDF ouput here
 		input := c.getChainRandomInput(parent)
-		if !c.engine.queueShuffler.Verify(input[:], randomData, randomSeedIteration) {
+		if !c.engine.queueShuffler.Verify(input[:], randomData, c.engine.config.RandomSeedIteration) {
 			return errInvalidRandomData
 		}
 		log.Info("New random data received", "random data", common.Bytes2Hex(randomData))
@@ -394,13 +393,13 @@ func (c *Context) prepare2(header *types.Header) error {
 	if parent.Nonce == (types.BlockNonce{}) {
 		input := parent.Hash()
 		log.Info("Requesting for new random seed calculation", "input", input)
-		c.engine.queueShuffler.Request(input[:], randomSeedIteration)
+		c.engine.queueShuffler.Request(input[:], c.engine.config.RandomSeedIteration)
 	} else {
 		// request the first VDF task after the node started
 		c.engine.queueShufflerOnce.Do(func() {
 			input := c.getChainRandomInput(parent)
 			log.Info("Requesting for random seed calculation", "input", input)
-			c.engine.queueShuffler.Request(input[:], randomSeedIteration)
+			c.engine.queueShuffler.Request(input[:], c.engine.config.RandomSeedIteration)
 		})
 	}
 
@@ -437,7 +436,7 @@ func (c *Context) prepare2(header *types.Header) error {
 	}
 
 	input := c.getChainRandomInput(parent)
-	randomData := RandomData(c.engine.queueShuffler.Peek(input[:], randomSeedIteration))
+	randomData := RandomData(c.engine.queueShuffler.Peek(input[:], c.engine.config.RandomSeedIteration))
 	if len(randomData) > 0 {
 		log.Trace("prepare2", "vdfOutput", common.Bytes2Hex(randomData))
 		if len(randomData) != randomSeedSize {
