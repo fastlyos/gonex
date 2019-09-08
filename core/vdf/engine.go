@@ -20,9 +20,11 @@ package vdf
 import (
 	"fmt"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 
 	"github.com/ethereum/go-ethereum/common"
 
@@ -43,17 +45,32 @@ type Engine struct {
 // Instance returns the singleton instance of the VDF Engine
 func Instance() *Engine {
 	engineOnce.Do(func() {
-		engine = newEngine()
+		engine = newEngine("vdf-cli")
 	})
 	return engine
 }
 
-func newEngine() *Engine {
-	cli, err := exec.LookPath("vdf-cli")
+// InitCLI inits the instance with the specific cli name.
+// Must be called before any call to Instance() to override the
+// default cli name "vdf-cli".
+// Useful unit test.
+func InitCLI(cliName string) {
+	engineOnce.Do(func() {
+		engine = newEngine(cliName)
+	})
+}
+
+func newEngine(cliName string) *Engine {
+	cli, err := exec.LookPath(cliName)
 	if err != nil {
-		log.Warn("vdf.newEngine", "vdf-cli", "not found")
+		log.Warn("vdf.newEngine", cliName, "not found")
 	}
 	return &Engine{cli}
+}
+
+// IsCLI returns whether cli is used for this engine
+func (e *Engine) IsCLI() bool {
+	return len(e.cli) > 0
 }
 
 // Verify verifies the generated output against the seed
@@ -69,20 +86,51 @@ func (e *Engine) Verify(seed, output []byte, iteration uint64, bitSize uint64) (
 
 // Generate generates the vdf output = (y, proof)
 func (e *Engine) Generate(seed []byte, iteration uint64, bitSize uint64, stop <-chan struct{}) (output []byte, err error) {
-	if len(e.cli) == 0 {
-		defer func() {
-			if x := recover(); x != nil {
-				log.Error("vdf.Generate: generation process panic", "reason", x)
-				err = fmt.Errorf("%v", x)
+	if len(e.cli) > 0 {
+		return e.generateCLI(seed, iteration, bitSize, stop)
+	}
+	defer func() {
+		if x := recover(); x != nil {
+			log.Error("vdf.Generate: generation process panic", "reason", x)
+			err = fmt.Errorf("%v", x)
+		}
+	}()
+	blockingStop := make(chan struct{})
+	var done chan struct{}
+	if stop != nil {
+		// always-listen adapter for blocking stop chan
+		done = make(chan struct{})
+		go func() {
+			select {
+			case <-stop:
+				log.Trace("vdf.Generate: vdf-go interrupted")
+				blockingStop <- struct{}{}
+				return
+			case <-done:
+				log.Trace("vdf.Generate: vdf-go done")
+				return
 			}
 		}()
-		y, proof := vdf_go.GenerateVDFWithStopChan(seed, int(iteration), int(bitSize), stop)
-		if y == nil || proof == nil {
-			return nil, nil
+		// give channel listening routine a chance to run first
+		runtime.Gosched()
+	}
+	y, proof := vdf_go.GenerateVDFWithStopChan(seed, int(iteration), int(bitSize), blockingStop)
+
+	if stop != nil && done != nil {
+		// release the stopping goroutine above
+		select {
+		case done <- struct{}{}:
+		default:
 		}
-		return append(y, proof...), nil
 	}
 
+	if y == nil || proof == nil {
+		return nil, nil
+	}
+	return append(y, proof...), nil
+}
+
+func (e *Engine) generateCLI(seed []byte, iteration uint64, bitSize uint64, stop <-chan struct{}) (output []byte, err error) {
 	cmd := exec.Command(e.cli,
 		"-l"+strconv.Itoa(int(bitSize)),
 		common.Bytes2Hex(seed),
@@ -96,8 +144,24 @@ func (e *Engine) Generate(seed []byte, iteration uint64, bitSize uint64, stop <-
 		go func() {
 			select {
 			case <-stop:
-				if cmd == nil || cmd.Process == nil {
+				if cmd == nil {
 					return
+				}
+				if cmd.Process == nil {
+					// process is signaled to kill before it's even started
+					if !func() bool {
+						for i := 0; i < 1000000; i++ {
+							// yeild and wait for process to start first
+							runtime.Gosched()
+							if cmd.Process != nil {
+								return true
+							}
+						}
+						return false
+					}() {
+						log.Info("vdf.Generate: non-exist vdf-cli interrupted")
+						return
+					}
 				}
 				log.Trace("vdf.Generate: vdf-cli interrupted")
 				if err := cmd.Process.Kill(); err != nil {
@@ -109,6 +173,8 @@ func (e *Engine) Generate(seed []byte, iteration uint64, bitSize uint64, stop <-
 				return
 			}
 		}()
+		// give channel listening routine a chance to run first
+		runtime.Gosched()
 	}
 
 	log.Trace("vdf.Generate", "seed", common.Bytes2Hex(seed), "iteration", iteration, "output", common.Bytes2Hex(output))
@@ -122,12 +188,20 @@ func (e *Engine) Generate(seed []byte, iteration uint64, bitSize uint64, stop <-
 		}
 	}
 
-	if err, ok := err.(*exec.ExitError); ok {
-		// verification failed
-		log.Trace("vdf.Generate", "error code", err.Error())
-		return nil, err
-	}
 	if err != nil {
+		if cmd.ProcessState != nil {
+			status := cmd.ProcessState.Sys().(syscall.WaitStatus)
+			if status.Signaled() && status.Signal() == syscall.SIGKILL {
+				// interrupted, nuffin wong
+				log.Error("vdf.Generate: interrupted")
+				return nil, nil
+			}
+		}
+		if err, ok := err.(*exec.ExitError); ok {
+			// verification failed
+			log.Trace("vdf.Generate", "error code", err.Error())
+			return nil, err
+		}
 		// sum ting wong
 		log.Error("vdf.Generate", "error", err)
 		return nil, err
