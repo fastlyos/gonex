@@ -23,9 +23,6 @@ import (
 	"io"
 	"math/big"
 	"sync"
-	"time"
-
-	"github.com/ethereum/go-ethereum/eth/downloader"
 
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/common"
@@ -493,22 +490,4 @@ func ecrecover(header *types.Header, sigcache *lru.ARCCache) (common.Address, er
 
 	sigcache.Add(hash, signer)
 	return signer, nil
-}
-
-// useful while header chain is syncing
-func mustGetHeader(chain consensus.ChainReader, number uint64) *types.Header {
-	// looping until the header is available locally
-	for {
-		header := chain.GetHeaderByNumber(number)
-		if header != nil {
-			return header
-		}
-		head := chain.CurrentHeader().Number.Uint64()
-		if number > head+uint64(downloader.MaxHeaderFetch) {
-			log.Error("Header request too far", "number", number, "chain head", head)
-			return nil
-		}
-		log.Trace("Waiting for header", "number", number, "chain head", head)
-		time.Sleep(65 * time.Millisecond)
-	}
 }
