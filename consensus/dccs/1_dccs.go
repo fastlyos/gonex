@@ -603,7 +603,7 @@ func (d *Dccs) GetRecentHeaders(snap *Snapshot, chain consensus.ChainReader, hea
 		} else {
 			// No explicit parents (or no more left), reach out to the database
 			h = chain.GetHeader(hash, num)
-			if header == nil {
+			if h == nil {
 				return nil, consensus.ErrUnknownAncestor
 			}
 		}
