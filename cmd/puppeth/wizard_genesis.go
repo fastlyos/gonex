@@ -127,6 +127,7 @@ func (w *wizard) makeGenesis() {
 			CoLoaBlock:              common.Big0,
 			LeakDuration:            1024,
 			ApplicationConfirmation: 128,
+			RandomSeedIteration:     20000000, // around 128 seconds
 		}
 		fmt.Println()
 		fmt.Println("How many seconds should blocks take? (default = 2)")
@@ -222,6 +223,10 @@ func (w *wizard) makeGenesis() {
 		fmt.Println()
 		fmt.Printf("How many confirmations is required before a sealer application takes effect? (default = %v)\n", genesis.Config.Dccs.ApplicationConfirmation)
 		genesis.Config.Dccs.ApplicationConfirmation = uint64(w.readDefaultInt(int(genesis.Config.Dccs.ApplicationConfirmation)))
+
+		fmt.Println()
+		fmt.Printf("How often should the sealer queue is re-shuffled, in VDF iteration? (default = %v)\n", genesis.Config.Dccs.RandomSeedIteration)
+		genesis.Config.Dccs.RandomSeedIteration = uint64(w.readDefaultInt(int(genesis.Config.Dccs.RandomSeedIteration)))
 
 	default:
 		log.Crit("Invalid consensus engine choice", "choice", choice)
