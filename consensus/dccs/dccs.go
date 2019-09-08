@@ -33,6 +33,7 @@ import (
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/core/vdf"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
@@ -145,6 +146,13 @@ type Dccs struct {
 	signer common.Address // Ethereum address of the signing key
 	signFn SignerFn       // Signer function to authorize hashes with
 	lock   sync.RWMutex   // Protects the signer fields
+
+	sealingQueueCache *lru.ARCCache // SealingQueue of recent blocks
+	extDataCache      *lru.ARCCache // ExtendedData of recent blocks
+	anchorExtraCache  *lru.ARCCache // Recently assembled anchor extra bytes
+
+	queueShuffler     *vdf.Delayer // Delayer for sealer shuffling seed
+	queueShufflerOnce sync.Once    // Lazy initilization for queueShuffler
 }
 
 // New creates a Dccs proof-of-foundation consensus engine with the initial
@@ -172,7 +180,12 @@ func New(config *params.DccsConfig, db ethdb.Database) *Dccs {
 // VerifyHeader checks whether a header conforms to the consensus rules.
 func (d *Dccs) VerifyHeader(chain consensus.ChainReader, header *types.Header, seal bool) error {
 	if chain.Config().IsCoLoa(header.Number) {
-		return d.verifyHeader2(chain, header, nil)
+		context := Context{
+			head:   header,
+			chain:  chain,
+			engine: d,
+		}
+		return context.verifyHeader2()
 	}
 	if chain.Config().IsThangLong(header.Number) {
 		return d.verifyHeader1(chain, header, nil)
@@ -191,7 +204,13 @@ func (d *Dccs) VerifyHeaders(chain consensus.ChainReader, headers []*types.Heade
 		for i, header := range headers {
 			var err error
 			if chain.Config().IsCoLoa(header.Number) {
-				err = d.verifyHeader2(chain, header, headers[:i])
+				context := Context{
+					head:    header,
+					parents: headers[:i],
+					chain:   chain,
+					engine:  d,
+				}
+				err = context.verifyHeader2()
 			} else if chain.Config().IsThangLong(header.Number) {
 				err = d.verifyHeader1(chain, header, headers[:i])
 			} else {
@@ -221,7 +240,12 @@ func (d *Dccs) VerifyUncles(chain consensus.ChainReader, block *types.Block) err
 // in the header satisfies the consensus protocol requirements.
 func (d *Dccs) VerifySeal(chain consensus.ChainReader, header *types.Header) error {
 	if chain.Config().IsCoLoa(header.Number) {
-		return d.verifySeal2(chain, header, nil)
+		context := Context{
+			head:   header,
+			chain:  chain,
+			engine: d,
+		}
+		return context.verifySeal2()
 	}
 	if chain.Config().IsThangLong(header.Number) {
 		return d.verifySeal1(chain, header, nil)
@@ -233,7 +257,11 @@ func (d *Dccs) VerifySeal(chain consensus.ChainReader, header *types.Header) err
 // header for running the transactions on top.
 func (d *Dccs) Prepare(chain consensus.ChainReader, header *types.Header) error {
 	if chain.Config().IsCoLoa(header.Number) {
-		return d.prepare2(chain, header)
+		context := Context{
+			chain:  chain,
+			engine: d,
+		}
+		return context.prepare2(header)
 	}
 	if chain.Config().IsThangLong(header.Number) {
 		return d.prepare1(chain, header)
@@ -253,7 +281,11 @@ func (d *Dccs) Initialize(chain consensus.ChainReader, header *types.Header, sta
 // rewards given, and returns the final block.
 func (d *Dccs) Finalize(chain consensus.ChainReader, header *types.Header, state *state.StateDB, txs []*types.Transaction, uncles []*types.Header) {
 	if chain.Config().IsCoLoa(header.Number) {
-		d.finalize2(chain, header, state, txs, uncles)
+		context := Context{
+			chain:  chain,
+			engine: d,
+		}
+		context.finalize2(header, state, txs, uncles)
 		return
 	}
 	if chain.Config().IsThangLong(header.Number) {
@@ -281,7 +313,11 @@ func (d *Dccs) Finalize(chain consensus.ChainReader, header *types.Header, state
 // rewards given, and returns the final block.
 func (d *Dccs) FinalizeAndAssemble(chain consensus.ChainReader, header *types.Header, state *state.StateDB, txs []*types.Transaction, uncles []*types.Header, receipts []*types.Receipt) (*types.Block, error) {
 	if chain.Config().IsCoLoa(header.Number) {
-		return d.finalizeAndAssemble2(chain, header, state, txs, uncles, receipts)
+		context := Context{
+			chain:  chain,
+			engine: d,
+		}
+		return context.finalizeAndAssemble2(header, state, txs, uncles, receipts)
 	}
 	if chain.Config().IsThangLong(header.Number) {
 		return d.finalizeAndAssemble1(chain, header, state, txs, uncles, receipts)
@@ -334,7 +370,11 @@ func (d *Dccs) Authorize(signer common.Address, signFn SignerFn, state *state.St
 func (d *Dccs) Seal(chain consensus.ChainReader, block *types.Block, results chan<- *types.Block, stop <-chan struct{}) error {
 	header := block.Header()
 	if chain.Config().IsCoLoa(header.Number) {
-		return d.seal2(chain, block, results, stop)
+		context := Context{
+			chain:  chain,
+			engine: d,
+		}
+		return context.seal2(block, results, stop)
 	}
 	if chain.Config().IsThangLong(header.Number) {
 		return d.seal1(chain, block, results, stop)
