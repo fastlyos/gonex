@@ -104,7 +104,7 @@ Specifying the `--testnet` flag, however, will reconfigure your `gonex` instance
    this.
  * Instead of connecting the main Nexty network, the client will connect to the test
    network, which uses different P2P bootnodes, different network IDs and genesis states.
-   
+
 *Note: Although there are some internal protective measures to prevent transactions from
 crossing over between the main network and test network, you should make sure to always
 use separate accounts for play-money and real-money. Unless you manually move
@@ -193,10 +193,14 @@ aware of and agree upon. This consists of a small JSON file (e.g. call it `genes
 ```json
 {
   "config": {
-    "chainId": 0,
+    "chainId": <arbitrary positive integer>,
     "homesteadBlock": 0,
+    "eip150Block": 0,
     "eip155Block": 0,
-    "eip158Block": 0
+    "eip158Block": 0,
+    "byzantiumBlock": 0,
+    "constantinopleBlock": 0,
+    "petersburgBlock": 0
   },
   "alloc": {},
   "coinbase": "0x0000000000000000000000000000000000000000",
