@@ -25,7 +25,6 @@ import (
 	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/log"
 	lru "github.com/hashicorp/golang-lru"
@@ -208,22 +207,22 @@ func (q *SealingQueue) difficulty(address common.Address,
 }
 
 // recents len is MIN(lastActiveLen,activeLen)/2
-func (d *Dccs) getSealingQueue(parentHash common.Hash, parents []*types.Header, chain consensus.ChainReader) (*SealingQueue, error) {
-	if q, ok := d.sealingQueueCache.Get(parentHash); ok {
+func (c *Context) getSealingQueue(parentHash common.Hash) (*SealingQueue, error) {
+	if q, ok := c.engine.sealingQueueCache.Get(parentHash); ok {
 		// in-memory SealingQueue found
 		queue := q.(*SealingQueue)
 		return queue, nil
 	}
 	log.Trace("getSealingQueue", "parentHash", parentHash)
-	parent := getAvailableHeaderByHash(parentHash, nil, parents, chain)
+	parent := c.getHeaderByHash(parentHash)
 	if parent == nil {
 		return nil, errUnknownPreviousSealer
 	}
-	sealer, err := ecrecover(parent, d.signatures)
+	sealer, err := c.ecrecover(parent)
 	if err != nil {
 		return nil, err
 	}
-	randomData, err := d.getChainRandomSeed(parent, nil, parents, chain)
+	randomData, err := c.getChainRandomSeed(parent)
 	if err != nil {
 		return nil, err
 	}
@@ -260,7 +259,7 @@ func (d *Dccs) getSealingQueue(parentHash common.Hash, parents []*types.Header, 
 	var maxDiff uint64
 
 	// scan backward atmost LeakDurations blocks from number
-	for i := uint64(0); i < d.config.LeakDuration; i++ {
+	for i := uint64(0); i < c.engine.config.LeakDuration; i++ {
 		if number <= i {
 			break // stop at the genesis block
 		}
@@ -276,12 +275,12 @@ func (d *Dccs) getSealingQueue(parentHash common.Hash, parents []*types.Header, 
 		// TODO: optimization for leakage case
 
 		n := number - i
-		header := getAvailableHeader(n, nil, parents, chain)
+		header := c.getHeaderByNumber(n)
 		if header == nil {
-			log.Error("getSealingQueue: getAvailableHeader returns nil", "n", n, "len(parents)", len(parents))
+			log.Error("getSealingQueue: getAvailableHeader returns nil", "n", n, "len(parents)", len(c.parents))
 			return nil, errUnknownBlock
 		}
-		sealer, err := ecrecover(header, d.signatures)
+		sealer, err := c.ecrecover(header)
 		if err != nil {
 			return nil, err
 		}
@@ -298,7 +297,7 @@ func (d *Dccs) getSealingQueue(parentHash common.Hash, parents []*types.Header, 
 		}
 	}
 
-	apps, err := d.crawlSealerApplications(parent, parents, chain)
+	apps, err := c.crawlSealerApplications(parent)
 	if err != nil {
 		return nil, err
 	}
@@ -320,23 +319,23 @@ func (d *Dccs) getSealingQueue(parentHash common.Hash, parents []*types.Header, 
 	}
 
 	// Store found snapshot into mem-cache
-	d.sealingQueueCache.Add(queue.hash, &queue)
+	c.engine.sealingQueueCache.Add(queue.hash, &queue)
 	return &queue, nil
 }
 
 // crawl back the sealer applications skip-list
-func (d *Dccs) crawlSealerApplications(header *types.Header, parents []*types.Header, chain consensus.ChainReader) ([]SealerApplication, error) {
+func (c *Context) crawlSealerApplications(header *types.Header) ([]SealerApplication, error) {
 	number := header.Number.Uint64()
 	apps := []SealerApplication{}
-	for header := getAvailableHeaderByHash(header.MixDigest, nil, parents, chain); header != nil; header = getAvailableHeaderByHash(header.MixDigest, nil, parents, chain) {
+	for header := c.getHeaderByHash(header.MixDigest); header != nil; header = c.getHeaderByHash(header.MixDigest) {
 		log.Trace("crawling", "appNumber", header.Number, "appNumber.Hash", header.Hash(), "cross-link", header.MixDigest)
 		if (header.MixDigest == common.Hash{}) {
 			// reach the CoLoa hardfork (new genesis)
 			break
 		}
-		appConfirmedNumber := header.Number.Uint64() + d.config.ApplicationConfirmation
+		appConfirmedNumber := header.Number.Uint64() + c.engine.config.ApplicationConfirmation
 		// condition: appConfirmedNumber in (number-LeakDuration;number]
-		if appConfirmedNumber+d.config.LeakDuration <= number {
+		if appConfirmedNumber+c.engine.config.LeakDuration <= number {
 			// any applications from this would be too old
 			break
 		}
@@ -348,7 +347,7 @@ func (d *Dccs) crawlSealerApplications(header *types.Header, parents []*types.He
 			log.Error("no sealer application data in header extra", "app number", header.Number, "number", number)
 			return nil, errors.New("no sealer application data in header extra")
 		}
-		link, _, err := anchorDataFromExtraBytes(header.Extra[extraVanity : len(header.Extra)-extraSeal])
+		link, _, err := extraToAnchorData(header.Extra[extraVanity : len(header.Extra)-extraSeal])
 		if err != nil {
 			return nil, err
 		}

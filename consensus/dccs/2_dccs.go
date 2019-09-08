@@ -64,11 +64,20 @@ func (d *Dccs) init2() *Dccs {
 	return d
 }
 
+// Context represents the context of a consensus request.
+type Context struct {
+	head    *types.Header         // the verifying header, nil for preparation
+	parents []*types.Header       // the previous headers are being parallel verified, empty for preparation
+	chain   consensus.ChainReader // the underlining chain
+	engine  *Dccs                 // shared config and caches
+}
+
 // verifyHeader2 checks whether a header conforms to the consensus rules.The
 // caller may optionally pass in a batch of parents (ascending order) to avoid
 // looking those up from the database. This is useful for concurrently verifying
 // a batch of new headers.
-func (d *Dccs) verifyHeader2(chain consensus.ChainReader, header *types.Header, parents []*types.Header) error {
+func (c *Context) verifyHeader2() error {
+	header := c.head
 	if header.Number == nil {
 		return errUnknownBlock
 	}
@@ -100,15 +109,15 @@ func (d *Dccs) verifyHeader2(chain consensus.ChainReader, header *types.Header, 
 		}
 	}
 	// If all checks passed, validate any special fields for hard forks
-	if err := misc.VerifyForkHashes(chain.Config(), header, false); err != nil {
+	if err := misc.VerifyForkHashes(c.chain.Config(), header, false); err != nil {
 		return err
 	}
 	// All basic checks passed, verify cascading fields
-	return d.verifyCascadingFields2(chain, header, parents)
+	return c.verifyCascadingFields2()
 }
 
-func (d *Dccs) getBlockNonce(parent *types.Header) types.BlockNonce {
-	if parent.Number.Uint64()+1 == d.config.CoLoaBlock.Uint64() {
+func (c *Context) getBlockNonce(parent *types.Header) types.BlockNonce {
+	if parent.Number.Uint64()+1 == c.engine.config.CoLoaBlock.Uint64() {
 		return types.BlockNonce{}
 	}
 	return types.EncodeNonce(parent.Nonce.Uint64() + 1)
@@ -118,24 +127,25 @@ func (d *Dccs) getBlockNonce(parent *types.Header) types.BlockNonce {
 // rather depend on a batch of previous headers. The caller may optionally pass
 // in a batch of parents (ascending order) to avoid looking those up from the
 // database. This is useful for concurrently verifying a batch of new headers.
-func (d *Dccs) verifyCascadingFields2(chain consensus.ChainReader, header *types.Header, parents []*types.Header) error {
+func (c *Context) verifyCascadingFields2() error {
+	header := c.head
 	// The genesis block is the always valid dead-end
 	number := header.Number.Uint64()
 	if number == 0 {
 		return nil
 	}
 	// Ensure that the block's timestamp isn't too close to it's parent
-	parent := getAvailableHeaderByHash(header.ParentHash, header, parents, chain)
+	parent := c.getHeaderByHash(header.ParentHash)
 	if parent == nil || parent.Number.Uint64() != number-1 || parent.Hash() != header.ParentHash {
 		return consensus.ErrUnknownAncestor
 	}
-	if parent.Time+d.config.Period > header.Time {
+	if parent.Time+c.engine.config.Period > header.Time {
 		return ErrInvalidTimestamp
 	}
 
 	// verify the cross-link reference to the last sealer application block
 	var expectedMixDigest common.Hash
-	if d.config.CoLoaBlock.Cmp(header.Number) == 0 {
+	if c.engine.config.CoLoaBlock.Cmp(header.Number) == 0 {
 		expectedMixDigest = common.Hash{}
 	} else if hasAnchorData(parent) {
 		expectedMixDigest = parent.Hash()
@@ -147,7 +157,7 @@ func (d *Dccs) verifyCascadingFields2(chain consensus.ChainReader, header *types
 	}
 
 	// Verify the extended extra data in header.Extra
-	expectedAnchorBytes, err := d.assembleAnchorExtra(parent, parents, chain)
+	expectedAnchorBytes, err := c.assembleAnchorExtra(parent)
 	if err != nil {
 		return err
 	}
@@ -157,7 +167,7 @@ func (d *Dccs) verifyCascadingFields2(chain consensus.ChainReader, header *types
 		return err
 	}
 	extBytes = extBytes[len(expectedAnchorBytes):]
-	randomData, n := getRandomDataFromExtra(extBytes)
+	randomData, n := bytesToRandomData(extBytes)
 
 	// reset the seed block ref on valid vdf output
 	nonce := types.BlockNonce{}
@@ -166,13 +176,13 @@ func (d *Dccs) verifyCascadingFields2(chain consensus.ChainReader, header *types
 			return errInvalidRandomDataSize
 		}
 		// Verify VDF ouput here
-		input := d.getChainRandomInput(parent, header, parents, chain)
-		if !d.queueShuffler.Verify(input[:], randomData, randomSeedIteration) {
+		input := c.getChainRandomInput(parent)
+		if !c.engine.queueShuffler.Verify(input[:], randomData, randomSeedIteration) {
 			return errInvalidRandomData
 		}
 		log.Info("New random data received", "random data", common.Bytes2Hex(randomData))
 	} else {
-		nonce = d.getBlockNonce(parent)
+		nonce = c.getBlockNonce(parent)
 	}
 	extBytes = extBytes[n:]
 	// TODO: verify price value in extBytes here
@@ -184,14 +194,15 @@ func (d *Dccs) verifyCascadingFields2(chain consensus.ChainReader, header *types
 	}
 
 	// All basic checks passed, verify the seal and return
-	return d.verifySeal2(chain, header, parents)
+	return c.verifySeal2()
 }
 
 // verifySeal2 checks whether the signature contained in the header satisfies the
 // consensus protocol requirements. The method accepts an optional list of parent
 // headers that aren't yet part of the local blockchain to generate the snapshots
 // from.
-func (d *Dccs) verifySeal2(chain consensus.ChainReader, header *types.Header, parents []*types.Header) error {
+func (c *Context) verifySeal2() error {
+	header := c.head
 	// Verifying the genesis block is not supported
 	number := header.Number.Uint64()
 	if number == 0 {
@@ -199,13 +210,13 @@ func (d *Dccs) verifySeal2(chain consensus.ChainReader, header *types.Header, pa
 	}
 
 	// Retrieve the sealing queue verify this header
-	queue, err := d.getSealingQueue(header.ParentHash, parents, chain)
+	queue, err := c.getSealingQueue(header.ParentHash)
 	if err != nil {
 		return err
 	}
 
 	// Resolve the authorization key and check against signers
-	signer, err := ecrecover(header, d.signatures)
+	signer, err := c.ecrecover(header)
 	if err != nil {
 		return err
 	}
@@ -217,27 +228,56 @@ func (d *Dccs) verifySeal2(chain consensus.ChainReader, header *types.Header, pa
 	}
 
 	// Ensure that the difficulty corresponds to the turn-ness of the signer
-	signerDifficulty := queue.difficulty(signer, func(hash common.Hash) *types.Header {
-		return getAvailableHeaderByHash(hash, header, parents, chain)
-	}, d.signatures)
+	signerDifficulty := queue.difficulty(signer, c.getHeaderByHash, c.engine.signatures)
 	if header.Difficulty.Uint64() != signerDifficulty {
 		return errInvalidDifficulty
 	}
 	return nil
 }
 
-// getAvailableHeaderByHash returns either:
+// getHeaderByNumber returns either:
+// + the context head, if number == head.Number
+// + the header in parents if available (nessesary for batch headers processing)
+// + chain.GetHeaderByNumber(number), if all else fail
+func (c *Context) getHeaderByNumber(number uint64) *types.Header {
+	var headerNumber uint64
+	if c.head != nil {
+		headerNumber = c.head.Number.Uint64()
+		if number == headerNumber {
+			return c.head
+		}
+		if number > headerNumber {
+			return c.chain.GetHeaderByNumber(number)
+		}
+	} else {
+		if len(c.parents) == 0 {
+			return c.chain.GetHeaderByNumber(number)
+		}
+		headerNumber = c.parents[len(c.parents)-1].Number.Uint64() + 1
+	}
+	idx := len(c.parents) - int(headerNumber) + int(number)
+	if idx >= 0 {
+		header := c.parents[idx]
+		if header.Number.Uint64() == number {
+			return header
+		}
+		log.Error("invalid parrent number", "expected", number, "actual", header.Number)
+	}
+	return c.chain.GetHeaderByNumber(number)
+}
+
+// getHeaderByHash returns either:
 // + the input header, if hash == header.Hash()
 // + chain.GetHeaderByHash(hash) if available
 // + the header in parents if available (nessesary for batch headers processing)
-func getAvailableHeaderByHash(hash common.Hash, header *types.Header, parents []*types.Header, chain consensus.ChainReader) *types.Header {
-	if header != nil && header.Hash() == hash {
-		return header
+func (c *Context) getHeaderByHash(hash common.Hash) *types.Header {
+	if c.head != nil && c.head.Hash() == hash {
+		return c.head
 	}
-	if h := chain.GetHeaderByHash(hash); h != nil {
+	if h := c.chain.GetHeaderByHash(hash); h != nil {
 		return h
 	}
-	for _, parent := range parents {
+	for _, parent := range c.parents {
 		if parent.Hash() == hash {
 			return parent
 		}
@@ -245,43 +285,43 @@ func getAvailableHeaderByHash(hash common.Hash, header *types.Header, parents []
 	return nil
 }
 
-func (d *Dccs) getChainRandomHeader(parent *types.Header, header *types.Header, parents []*types.Header, chain consensus.ChainReader) *types.Header {
+func (c *Context) getChainRandomHeader(parent *types.Header) *types.Header {
 	seedNumber := parent.Number.Uint64() - parent.Nonce.Uint64()
-	return getAvailableHeader(seedNumber, header, parents, chain)
+	return c.getHeaderByNumber(seedNumber)
 }
 
-func (d *Dccs) getChainRandomInput(parent *types.Header, header *types.Header, parents []*types.Header, chain consensus.ChainReader) common.Hash {
-	seedHeader := d.getChainRandomHeader(parent, header, parents, chain)
+func (c *Context) getChainRandomInput(parent *types.Header) common.Hash {
+	seedHeader := c.getChainRandomHeader(parent)
 	return seedHeader.Hash()
 }
 
-func (d *Dccs) getChainRandomSeed(parent *types.Header, header *types.Header, parents []*types.Header, chain consensus.ChainReader) (RandomData, error) {
-	seedHeader := d.getChainRandomHeader(parent, header, parents, chain)
-	if d.config.CoLoaBlock.Cmp(seedHeader.Number) == 0 {
+func (c *Context) getChainRandomSeed(parent *types.Header) (RandomData, error) {
+	seedHeader := c.getChainRandomHeader(parent)
+	if c.engine.config.CoLoaBlock.Cmp(seedHeader.Number) == 0 {
 		// use the sealer digest for hardfork block
-		anchorData, err := d.getAnchorData(seedHeader)
+		anchorData, err := c.getAnchorData(seedHeader)
 		if err != nil {
 			return nil, err
 		}
 		return anchorData.sealersDigest[:], nil
 	}
-	return d.getRandomData(seedHeader)
+	return c.getRandomData(seedHeader)
 }
 
-func getLinkDest(header *types.Header, parents []*types.Header, chain consensus.ChainReader) *types.Header {
+func (c *Context) getLinkDest(header *types.Header) *types.Header {
 	if header.MixDigest == (common.Hash{}) {
 		// hardfork block is linked to itself
 		return header
 	}
-	return getAvailableHeaderByHash(header.MixDigest, header, parents, chain)
+	return c.getHeaderByHash(header.MixDigest)
 }
 
-func (d *Dccs) getAnchorDest(header *types.Header, parents []*types.Header, chain consensus.ChainReader) (*types.Header, error) {
+func (c *Context) getAnchorDest(header *types.Header) (*types.Header, error) {
 	linkHeader := header
 	if !hasAnchorData(header) {
-		linkHeader = getLinkDest(header, parents, chain)
+		linkHeader = c.getLinkDest(header)
 	}
-	anchorData, err := d.getAnchorData(linkHeader)
+	anchorData, err := c.getAnchorData(linkHeader)
 	if err != nil {
 		return nil, err
 	}
@@ -294,7 +334,7 @@ func (d *Dccs) getAnchorDest(header *types.Header, parents []*types.Header, chai
 		// hardfork block is anchored to itself
 		return linkHeader, nil
 	}
-	return getAvailableHeaderByHash(anchorData.destHash, header, parents, chain), nil
+	return c.getHeaderByHash(anchorData.destHash), nil
 }
 
 // prepareBeneficiary2 gets the beneficiary of signer from smart contract and
@@ -302,7 +342,7 @@ func (d *Dccs) getAnchorDest(header *types.Header, parents []*types.Header, chai
 // + check the contract of current state first
 // + trace back the previous header for 'just left sealer'
 // + if all else fails, the sealer address is kept as reward beneficiary
-func (d *Dccs) prepareBeneficiary2(header *types.Header, chain consensus.ChainReader) {
+func (c *Context) prepareBeneficiary2(header *types.Header) {
 	index := common.BigToHash(common.Big1).String()[2:]
 	sealer := "0x000000000000000000000000" + header.Coinbase.String()[2:]
 	key := crypto.Keccak256Hash(hexutil.MustDecode(sealer + index))
@@ -310,9 +350,9 @@ func (d *Dccs) prepareBeneficiary2(header *types.Header, chain consensus.ChainRe
 	number := header.Number.Uint64()
 
 	// try the current active state first
-	state, err := chain.State()
+	state, err := c.chain.State()
 	if err == nil && state != nil {
-		hash := state.GetState(chain.Config().Dccs.Contract, key)
+		hash := state.GetState(c.chain.Config().Dccs.Contract, key)
 		if (hash != common.Hash{}) {
 			header.Coinbase = common.HexToAddress(hash.Hex())
 			return
@@ -320,20 +360,20 @@ func (d *Dccs) prepareBeneficiary2(header *types.Header, chain consensus.ChainRe
 	}
 
 	// scan the previous signed blocks
-	for n := number - 1; n >= number-d.config.LeakDuration; n-- {
+	for n := number - 1; n >= number-c.engine.config.LeakDuration; n-- {
 		if n < 1 {
 			break
 		}
-		h := chain.GetHeaderByNumber(n)
+		h := c.chain.GetHeaderByNumber(n)
 		if h == nil {
 			break
 		}
-		s, err := ecrecover(h, d.signatures)
+		s, err := c.ecrecover(h)
 		if err != nil {
 			log.Error("Unable to recover signature", "err", err)
 			return
 		}
-		if s == d.signer {
+		if s == c.engine.signer {
 			// found the previous sealed block
 			header.Coinbase = h.Coinbase
 			return
@@ -343,9 +383,9 @@ func (d *Dccs) prepareBeneficiary2(header *types.Header, chain consensus.ChainRe
 
 // prepare2 implements consensus.Engine, preparing all the consensus fields of the
 // header for running the transactions on top.
-func (d *Dccs) prepare2(chain consensus.ChainReader, header *types.Header) error {
+func (c *Context) prepare2(header *types.Header) error {
 	number := header.Number.Uint64()
-	parent := chain.GetHeader(header.ParentHash, number-1)
+	parent := c.chain.GetHeader(header.ParentHash, number-1)
 	if parent == nil {
 		return consensus.ErrUnknownAncestor
 	}
@@ -354,35 +394,35 @@ func (d *Dccs) prepare2(chain consensus.ChainReader, header *types.Header) error
 	if parent.Nonce == (types.BlockNonce{}) {
 		input := parent.Hash()
 		log.Info("Requesting for new random seed calculation", "input", input)
-		d.queueShuffler.Request(input[:], randomSeedIteration)
+		c.engine.queueShuffler.Request(input[:], randomSeedIteration)
 	} else {
 		// request the first VDF task after the node started
-		d.queueShufflerOnce.Do(func() {
-			input := d.getChainRandomInput(parent, nil, nil, chain)
+		c.engine.queueShufflerOnce.Do(func() {
+			input := c.getChainRandomInput(parent)
 			log.Info("Requesting for random seed calculation", "input", input)
-			d.queueShuffler.Request(input[:], randomSeedIteration)
+			c.engine.queueShuffler.Request(input[:], randomSeedIteration)
 		})
 	}
 
-	d.prepareBeneficiary2(header, chain)
+	c.prepareBeneficiary2(header)
 
-	queue, err := d.getSealingQueue(header.ParentHash, nil, chain)
+	queue, err := c.getSealingQueue(header.ParentHash)
 	if err != nil {
 		return err
 	}
 
 	// Set the correct difficulty
-	difficulty := queue.difficulty(d.signer, chain.GetHeaderByHash, d.signatures)
+	difficulty := queue.difficulty(c.engine.signer, c.chain.GetHeaderByHash, c.engine.signatures)
 	header.Difficulty = new(big.Int).SetUint64(difficulty)
 
 	// Ensure the timestamp has the correct delay
-	header.Time = parent.Time + d.config.Period
+	header.Time = parent.Time + c.engine.config.Period
 	if header.Time < uint64(time.Now().Unix()) {
 		header.Time = uint64(time.Now().Unix())
 	}
 
 	// set the cross-link reference to the last block with anchor data
-	if d.config.CoLoaBlock.Cmp(header.Number) == 0 {
+	if c.engine.config.CoLoaBlock.Cmp(header.Number) == 0 {
 		// special handling for hardfork block
 		header.MixDigest = common.Hash{}
 	} else if hasAnchorData(parent) {
@@ -391,13 +431,13 @@ func (d *Dccs) prepare2(chain consensus.ChainReader, header *types.Header) error
 		header.MixDigest = parent.MixDigest
 	}
 
-	anchorBytes, err := d.assembleAnchorExtra(parent, nil, chain)
+	anchorBytes, err := c.assembleAnchorExtra(parent)
 	if err != nil {
 		return err
 	}
 
-	input := d.getChainRandomInput(parent, nil, nil, chain)
-	randomData := RandomData(d.queueShuffler.Peek(input[:], randomSeedIteration))
+	input := c.getChainRandomInput(parent)
+	randomData := RandomData(c.engine.queueShuffler.Peek(input[:], randomSeedIteration))
 	if len(randomData) > 0 {
 		log.Trace("prepare2", "vdfOutput", common.Bytes2Hex(randomData))
 		if len(randomData) != randomSeedSize {
@@ -406,7 +446,7 @@ func (d *Dccs) prepare2(chain consensus.ChainReader, header *types.Header) error
 		header.Nonce = types.BlockNonce{}
 	} else {
 		// record the distant from the last sealer application block
-		header.Nonce = d.getBlockNonce(parent)
+		header.Nonce = c.getBlockNonce(parent)
 	}
 
 	// Prepare the start of the header.Extra
@@ -422,19 +462,19 @@ func (d *Dccs) prepare2(chain consensus.ChainReader, header *types.Header) error
 
 // finalize2 implements consensus.Engine, ensuring no uncles are set, nor block
 // rewards given, and returns the final block.
-func (d *Dccs) finalize2(chain consensus.ChainReader, header *types.Header, state *state.StateDB, txs []*types.Transaction, uncles []*types.Header) {
+func (c *Context) finalize2(header *types.Header, state *state.StateDB, txs []*types.Transaction, uncles []*types.Header) {
 	// Calculate any block reward for the sealer and commit the final state root
-	d.calculateRewards(chain, state, header)
-	header.Root = state.IntermediateRoot(chain.Config().IsEIP158(header.Number))
+	c.engine.calculateRewards(c.chain, state, header)
+	header.Root = state.IntermediateRoot(c.chain.Config().IsEIP158(header.Number))
 	header.UncleHash = types.EmptyUncleHash
 }
 
 // finalizeAndAssemble2 implements consensus.Engine, ensuring no uncles are set, nor block
 // rewards given, and returns the final block.
-func (d *Dccs) finalizeAndAssemble2(chain consensus.ChainReader, header *types.Header, state *state.StateDB, txs []*types.Transaction, uncles []*types.Header, receipts []*types.Receipt) (block *types.Block, err error) {
+func (c *Context) finalizeAndAssemble2(header *types.Header, state *state.StateDB, txs []*types.Transaction, uncles []*types.Header, receipts []*types.Receipt) (block *types.Block, err error) {
 	// Calculate any block reward for the sealer and commit the final state root
-	d.calculateRewards(chain, state, header)
-	header.Root = state.IntermediateRoot(chain.Config().IsEIP158(header.Number))
+	c.engine.calculateRewards(c.chain, state, header)
+	header.Root = state.IntermediateRoot(c.chain.Config().IsEIP158(header.Number))
 	header.UncleHash = types.EmptyUncleHash
 
 	// Assemble and return the final block for sealing
@@ -443,7 +483,7 @@ func (d *Dccs) finalizeAndAssemble2(chain consensus.ChainReader, header *types.H
 
 // seal2 implements consensus.Engine, attempting to create a sealed block using
 // the local signing credentials.
-func (d *Dccs) seal2(chain consensus.ChainReader, block *types.Block, results chan<- *types.Block, stop <-chan struct{}) error {
+func (c *Context) seal2(block *types.Block, results chan<- *types.Block, stop <-chan struct{}) error {
 	header := block.Header()
 
 	// Sealing the genesis block is not supported
@@ -452,15 +492,15 @@ func (d *Dccs) seal2(chain consensus.ChainReader, block *types.Block, results ch
 		return errUnknownBlock
 	}
 	// For 0-period chains, refuse to seal empty blocks (no reward but would spin sealing)
-	if d.config.Period == 0 && len(block.Transactions()) == 0 {
+	if c.engine.config.Period == 0 && len(block.Transactions()) == 0 {
 		return errWaitTransactions
 	}
 	// Don't hold the signer fields for the entire sealing procedure
-	d.lock.RLock()
-	signer, signFn := d.signer, d.signFn
-	d.lock.RUnlock()
+	c.engine.lock.RLock()
+	signer, signFn := c.engine.signer, c.engine.signFn
+	c.engine.lock.RUnlock()
 
-	queue, err := d.getSealingQueue(header.ParentHash, nil, chain)
+	queue, err := c.getSealingQueue(header.ParentHash)
 	if err != nil {
 		return err
 	}
@@ -475,13 +515,13 @@ func (d *Dccs) seal2(chain consensus.ChainReader, block *types.Block, results ch
 	// Sweet, the protocol permits us to sign the block, wait for our time
 	delay := time.Unix(int64(header.Time), 0).Sub(time.Now()) // nolint: gosimple
 	// Find the signer offset
-	offset, err := queue.offset(signer, chain.GetHeaderByHash, d.signatures)
+	offset, err := queue.offset(signer, c.chain.GetHeaderByHash, c.engine.signatures)
 	if err != nil {
 		return err
 	}
 	if offset > 0 {
 		// It's not our turn explicitly to sign, delay it a bit
-		wiggle := d.calcDelayTimeForOffset(offset)
+		wiggle := c.engine.calcDelayTimeForOffset(offset)
 		delay += wiggle
 		log.Trace("Out-of-turn signing requested", "wiggle", common.PrettyDuration(wiggle))
 	}
@@ -508,4 +548,8 @@ func (d *Dccs) seal2(chain consensus.ChainReader, block *types.Block, results ch
 	}()
 
 	return nil
+}
+
+func (c *Context) ecrecover(header *types.Header) (common.Address, error) {
+	return ecrecover(header, c.engine.signatures)
 }
