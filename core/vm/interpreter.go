@@ -17,13 +17,20 @@
 package vm
 
 import (
+	"bytes"
 	"fmt"
 	"hash"
 	"sync/atomic"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/math"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/log"
+)
+
+var (
+	// RevertTopic is Keccak("REVERT")
+	RevertTopic = common.HexToHash("e13872d662304a4be4efe6d4425b00781f90609ddf2ef6e5b5e5c8bc7f5ed47f")
 )
 
 // Config are the configuration options for the Interpreter
@@ -283,6 +290,15 @@ func (in *EVMInterpreter) Run(contract *Contract, input []byte, readOnly bool) (
 		case err != nil:
 			return nil, err
 		case operation.reverts:
+			if len(res) > 68 {
+				reason := bytes.TrimRight(res[68:], "\x00")
+				log := types.Log{
+					Address: contract.Address(),
+					Topics:  []common.Hash{RevertTopic},
+					Data:    reason,
+				}
+				in.evm.Logs = append(in.evm.Logs, &log)
+			}
 			return res, errExecutionReverted
 		case operation.halts:
 			return res, nil
