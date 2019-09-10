@@ -17,7 +17,6 @@
 package vm
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"hash"
@@ -298,10 +297,8 @@ func (in *EVMInterpreter) Run(contract *Contract, input []byte, readOnly bool) (
 		case err != nil:
 			return nil, err
 		case operation.reverts:
-			if len(res) > 68 {
-				reason := bytes.TrimRight(res[68:], "\x00")
-				in.evm.LogFailure(contract.Address(), params.TopicRevert, string(reason))
-			}
+			msg := params.GetSolidityRevertMessage(res)
+			in.evm.LogFailure(contract.Address(), params.TopicRevert, msg)
 			return res, errExecutionReverted
 		case operation.halts:
 			return res, nil

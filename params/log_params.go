@@ -16,7 +16,12 @@
 
 package params
 
-import "github.com/ethereum/go-ethereum/common"
+import (
+	"bytes"
+	"math/big"
+
+	"github.com/ethereum/go-ethereum/common"
+)
 
 const (
 	ErrorLogInvalidOpCode            = "invalid opcode 0x%x"
@@ -42,3 +47,27 @@ var (
 	// TopicError is Keccak("ERROR")
 	TopicError = common.HexToHash("6368faa35d5ea15ae80b929d8626383bb91c2157389a6ddb6239282e6aa9005d")
 )
+
+var (
+	// SolidityErrorSignature is Keccak("Error(string)")
+	SolidityErrorSignature = []byte{0x08, 0xc3, 0x79, 0xa0}
+)
+
+// GetSolidityRevertMessage handles Solidity revert and require message.
+func GetSolidityRevertMessage(res []byte) string {
+	if len(res) < 4+32+32 {
+		return string(res)
+	}
+	if bytes.Compare(res[:4], SolidityErrorSignature) != 0 {
+		return string(res)
+	}
+	res = res[4:]
+	offset := int(new(big.Int).SetBytes(res[:32]).Uint64())
+	res = res[32:]
+	size := int(new(big.Int).SetBytes(res[:32]).Uint64())
+	if len(res) < offset+size {
+		return string(res)
+	}
+	msg := string(res[offset : offset+size])
+	return msg
+}
