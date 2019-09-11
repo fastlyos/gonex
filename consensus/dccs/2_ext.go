@@ -49,22 +49,23 @@ type ExtendedData struct {
 	random RandomData
 }
 
-func (e *ExtendedData) bytes() []byte {
+func (e *ExtendedData) toExtra() []byte {
 	if e == nil {
 		return []byte{}
 	}
 	var bytes []byte
-	bytes = append(bytes, e.anchor.bytes()...)
+	bytes = append(bytes, e.anchor.toExtra()...)
+	bytes = append(bytes, e.random.toExtra()...)
 	return bytes
 }
 
-func bytesToExtData(extBytes []byte) (*ExtendedData, error) {
-	anchorData, n, err := extraToAnchorData(extBytes)
+func extDataFrom(extBytes []byte) (*ExtendedData, error) {
+	anchorData, n, err := anchorDataFrom(extBytes)
 	if err != nil {
 		return nil, err
 	}
 	extBytes = extBytes[n:]
-	randomData, n := bytesToRandomData(extBytes)
+	randomData, n := randomDataFrom(extBytes)
 	extBytes = extBytes[n:]
 	extData := ExtendedData{
 		anchor: anchorData,
@@ -83,7 +84,7 @@ func (c *Context) getExtData(header *types.Header) (*ExtendedData, error) {
 		ed := e.(*ExtendedData)
 		return ed, nil
 	}
-	ext, err := bytesToExtData(header.Extra[extraVanity : len(header.Extra)-extraSeal])
+	ext, err := extDataFrom(header.Extra[extraVanity : len(header.Extra)-extraSeal])
 	if err != nil || ext == nil {
 		return nil, err
 	}
@@ -94,7 +95,7 @@ func (c *Context) getExtData(header *types.Header) (*ExtendedData, error) {
 // RandomData is the seed for sealer shuffleing.
 type RandomData []byte
 
-func bytesToRandomData(extra []byte) (RandomData, int) {
+func randomDataFrom(extra []byte) (RandomData, int) {
 	size := len(extra)
 	if size < 1+randomSeedSize {
 		return nil, 0
@@ -106,7 +107,7 @@ func bytesToRandomData(extra []byte) (RandomData, int) {
 	return append(output[:0:0], output...), 1 + randomSeedSize
 }
 
-func (r RandomData) bytes() []byte {
+func (r RandomData) toExtra() []byte {
 	if len(r) > 0 {
 		return append([]byte{ExtendedDataTypeVDF}, r...)
 	}
@@ -140,7 +141,7 @@ type AnchorData struct {
 	applications  []SealerApplication // sealer applications confirmed in the parent block
 }
 
-func (e *AnchorData) bytes() []byte {
+func (e *AnchorData) toExtra() []byte {
 	if e == nil {
 		return []byte{}
 	}
@@ -157,7 +158,7 @@ func (e *AnchorData) bytes() []byte {
 	return extra
 }
 
-func extraToAnchorData(extra []byte) (*AnchorData, int, error) {
+func anchorDataFrom(extra []byte) (*AnchorData, int, error) {
 	size := len(extra)
 	if size == 0 {
 		return nil, 0, nil
@@ -250,7 +251,7 @@ func (c *Context) assembleAnchorExtra(parent *types.Header) ([]byte, error) {
 		ext := ExtendedData{
 			anchor: &anchorData,
 		}
-		return ext.bytes(), nil
+		return ext.toExtra(), nil
 	}
 
 	linkHeader := c.getLinkDest(parent)
@@ -308,7 +309,7 @@ func (c *Context) assembleAnchorExtra(parent *types.Header) ([]byte, error) {
 	// only calculate sealersDigest when nessesary
 	anchorData.sealersDigest = queue.sealersDigest()
 
-	anchorExtra := anchorData.bytes()
+	anchorExtra := anchorData.toExtra()
 	c.engine.anchorExtraCache.Add(parentHash, anchorExtra)
 	return anchorExtra, nil
 }

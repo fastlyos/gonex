@@ -347,7 +347,7 @@ func (c *Context) crawlSealerApplications(header *types.Header) ([]SealerApplica
 			log.Error("no sealer application data in header extra", "app number", header.Number, "number", number)
 			return nil, errors.New("no sealer application data in header extra")
 		}
-		link, _, err := extraToAnchorData(header.Extra[extraVanity : len(header.Extra)-extraSeal])
+		link, _, err := anchorDataFrom(header.Extra[extraVanity : len(header.Extra)-extraSeal])
 		if err != nil {
 			return nil, err
 		}

@@ -174,7 +174,7 @@ func (c *Context) verifyCascadingFields2() error {
 		return err
 	}
 	extBytes = extBytes[len(expectedAnchorBytes):]
-	randomData, n := bytesToRandomData(extBytes)
+	randomData, n := randomDataFrom(extBytes)
 
 	// reset the seed block ref on valid vdf output
 	nonce := types.BlockNonce{}
@@ -462,7 +462,7 @@ func (c *Context) prepare2(header *types.Header) error {
 	}
 	header.Extra = header.Extra[:extraVanity]
 	header.Extra = append(header.Extra, anchorBytes...)
-	header.Extra = append(header.Extra, randomData.bytes()...)
+	header.Extra = append(header.Extra, randomData.toExtra()...)
 	header.Extra = append(header.Extra, make([]byte, extraSeal)...)
 	return nil
 }
