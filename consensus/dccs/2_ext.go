@@ -21,6 +21,8 @@ import (
 	"bytes"
 	"errors"
 
+	"github.com/ethereum/go-ethereum/rlp"
+
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/log"
@@ -38,6 +40,7 @@ var (
 const (
 	ExtendedDataTypeNone        byte = 0x00
 	ExtendedDataTypeVDF         byte = 0x01
+	ExtendedDataTypePrice       byte = 0x02
 	ExtendedDataTypeSealerJoin  byte = 0xF0
 	ExtendedDataTypeSealerLeave byte = 0xF1
 	ExtendedDataTypeAnchor      byte = 0xFF
@@ -47,6 +50,7 @@ const (
 type ExtendedData struct {
 	anchor *AnchorData // always comes first
 	random RandomData
+	price  *Price
 }
 
 func (e *ExtendedData) toExtra() []byte {
@@ -56,6 +60,7 @@ func (e *ExtendedData) toExtra() []byte {
 	var bytes []byte
 	bytes = append(bytes, e.anchor.toExtra()...)
 	bytes = append(bytes, e.random.toExtra()...)
+	bytes = append(bytes, e.price.toExtra()...)
 	return bytes
 }
 
@@ -67,9 +72,11 @@ func extDataFrom(extBytes []byte) (*ExtendedData, error) {
 	extBytes = extBytes[n:]
 	randomData, n := randomDataFrom(extBytes)
 	extBytes = extBytes[n:]
+	price, _ := priceFrom(extBytes)
 	extData := ExtendedData{
 		anchor: anchorData,
 		random: randomData,
+		price:  price,
 	}
 	return &extData, nil
 }
@@ -312,4 +319,43 @@ func (c *Context) assembleAnchorExtra(parent *types.Header) ([]byte, error) {
 	anchorExtra := anchorData.toExtra()
 	c.engine.anchorExtraCache.Add(parentHash, anchorExtra)
 	return anchorExtra, nil
+}
+
+func (c *Context) getPrice(header *types.Header) (*Price, error) {
+	extData, err := c.getExtData(header)
+	if err != nil {
+		return nil, err
+	}
+	if extData == nil {
+		return nil, nil
+	}
+	return extData.price, nil
+}
+
+func priceFrom(extra []byte) (*Price, int) {
+	size := len(extra)
+	if size < 1 {
+		return nil, 0
+	}
+	if extra[0] != ExtendedDataTypePrice {
+		return nil, 0
+	}
+	r := bytes.NewReader(extra[1:])
+	var price Price
+	if err := rlp.Decode(r, &price); err != nil {
+		return nil, 0
+	}
+	return &price, size - r.Len()
+}
+
+func (p *Price) toExtra() []byte {
+	if p == nil {
+		return nil
+	}
+	bytes, err := rlp.EncodeToBytes(p)
+	if err != nil {
+		log.Error("Failed to serialize price data", "err", err, "price", p.Rat().RatString())
+		return nil
+	}
+	return append([]byte{ExtendedDataTypePrice}, bytes...)
 }

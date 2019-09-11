@@ -21,19 +21,27 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"math"
 	"math/big"
 	"time"
 
 	"github.com/ethereum/go-ethereum/accounts"
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
+	"github.com/ethereum/go-ethereum/accounts/abi/bind/backends"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/deployer"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/consensus/misc"
+	"github.com/ethereum/go-ethereum/contracts/nexty/endurio"
+	"github.com/ethereum/go-ethereum/contracts/nexty/endurio/stable"
+	"github.com/ethereum/go-ethereum/contracts/nexty/endurio/volatile"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vdf"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/params"
 	lru "github.com/hashicorp/golang-lru"
 )
 
@@ -51,6 +59,9 @@ var (
 	errInvalidExtendedData       = errors.New("Extended data does not matches")
 	errInvalidRandomData         = errors.New("Invalid random data in extra data")
 	errInvalidRandomDataSize     = errors.New("Invalid random data size from relayer")
+
+	errInvalidPriceData  = errors.New("price block contains invalid price value")
+	errUnexpectPriceData = errors.New("non-price block contains price value")
 )
 
 // Init the second hardfork of DCCS consensus
@@ -77,6 +88,14 @@ func NewContext(engine *Dccs, chain consensus.ChainReader) *Context {
 		engine: engine,
 	}
 	return &context
+}
+
+// PriceEngine creates and returns the PriceEngine singleton instance
+func (d *Dccs) PriceEngine() *PriceEngine {
+	d.priceEngineOnce.Do(func() {
+		d.priceEngine = newPriceEngine(d.config)
+	})
+	return d.priceEngine
 }
 
 // verifyHeader2 checks whether a header conforms to the consensus rules.The
@@ -141,6 +160,7 @@ func (c *Context) verifyCascadingFields2() error {
 	if number == 0 {
 		return nil
 	}
+
 	// Ensure that the block's timestamp isn't too close to it's parent
 	parent := c.getHeaderByHash(header.ParentHash)
 	if parent == nil || parent.Number.Uint64() != number-1 || parent.Hash() != header.ParentHash {
@@ -191,14 +211,29 @@ func (c *Context) verifyCascadingFields2() error {
 	} else {
 		nonce = c.getBlockNonce(parent)
 	}
-	extBytes = extBytes[n:]
-	// TODO: verify price value in extBytes here
-
 	// verify the seed block ref
 	if header.Nonce != nonce {
 		log.Error("invalid nonce as seed ref", "want", nonce, "have", header.Nonce)
 		return errInvalidNonce
 	}
+
+	extBytes = extBytes[n:]
+	price, _ := priceFrom(extBytes)
+
+	if c.engine.config.IsPriceBlock(number) {
+		if price == nil {
+			log.Warn("Missing price data in block", "number", number)
+		} else if price.Rat().Cmp(common.Rat0) <= 0 {
+			log.Error("Invalid price data in block", "number", number, "price", price.Rat().RatString())
+			return errInvalidPriceData
+		} else {
+			log.Info("Block price data found", "number", number, "price", price.Rat().RatString())
+		}
+	} else if price != nil {
+		return errUnexpectPriceData
+	}
+
+	// TODO: cache the extData here
 
 	// All basic checks passed, verify the seal and return
 	return c.verifySeal2()
@@ -400,13 +435,13 @@ func (c *Context) prepare2(header *types.Header) error {
 	// request the new vdf calculation after each zero block nonce
 	if parent.Nonce == (types.BlockNonce{}) {
 		input := parent.Hash()
-		log.Info("Requesting for new random seed calculation", "input", input)
+		log.Info("Requesting new random seed", "input", common.Bytes2Hex(input[:]))
 		c.engine.queueShuffler.Request(input[:], c.engine.config.RandomSeedIteration)
 	} else {
 		// request the first VDF task after the node started
 		c.engine.queueShufflerOnce.Do(func() {
 			input := c.getChainRandomInput(parent)
-			log.Info("Requesting for random seed calculation", "input", input)
+			log.Info("First request for random seed", "input", common.Bytes2Hex(input[:]))
 			c.engine.queueShuffler.Request(input[:], c.engine.config.RandomSeedIteration)
 		})
 	}
@@ -456,6 +491,18 @@ func (c *Context) prepare2(header *types.Header) error {
 		header.Nonce = c.getBlockNonce(parent)
 	}
 
+	var price *Price
+	if c.engine.config.IsPriceBlock(number) {
+		price = c.engine.PriceEngine().CurrentPrice()
+		if price == nil {
+			log.Warn("No price to record in block", "number", number)
+		} else if price.Rat().Cmp(common.Rat0) <= 0 {
+			log.Error("Skip recording invalid price data", "price", price.Rat().RatString())
+		} else {
+			log.Info("Encode price to block extra", "price", price.Rat().RatString())
+		}
+	}
+
 	// Prepare the start of the header.Extra
 	if len(header.Extra) < extraVanity {
 		header.Extra = append(header.Extra, bytes.Repeat([]byte{0x00}, extraVanity-len(header.Extra))...)
@@ -463,8 +510,31 @@ func (c *Context) prepare2(header *types.Header) error {
 	header.Extra = header.Extra[:extraVanity]
 	header.Extra = append(header.Extra, anchorBytes...)
 	header.Extra = append(header.Extra, randomData.toExtra()...)
+	header.Extra = append(header.Extra, price.toExtra()...)
 	header.Extra = append(header.Extra, make([]byte, extraSeal)...)
 	return nil
+}
+
+// initialize implements the consensus.Engine
+func (c *Context) initialize2(header *types.Header, state *state.StateDB) (types.Transactions, types.Receipts, error) {
+	if header.Number.Cmp(c.engine.config.CoLoaBlock) == 0 {
+		if err := deployCoLoaContracts(c.chain, header, state); err != nil {
+			log.Error("Failed to deploy CoLoa stablecoin contracts", "err", err)
+			return nil, nil, err
+		}
+		header.Root = state.IntermediateRoot(c.chain.Config().IsEIP158(header.Number))
+		log.Info("⚙ Successfully deploy CoLoa stablecoin contracts")
+		return nil, nil, nil
+	}
+
+	medianPrice, err := c.CalcMedianPrice(header.Number.Uint64() - params.CanonicalDepth)
+	if err != nil {
+		log.Trace("Failed to calculate canonical median price", "err", err, "number", header.Number)
+	}
+
+	txs, receipts, err := OnBlockInitialized(c.chain, header, state, medianPrice)
+	header.Root = state.IntermediateRoot(c.chain.Config().IsEIP158(header.Number))
+	return txs, receipts, err
 }
 
 // finalize2 implements consensus.Engine, ensuring no uncles are set, nor block
@@ -559,4 +629,84 @@ func (c *Context) seal2(block *types.Block, results chan<- *types.Block, stop <-
 
 func (c *Context) ecrecover(header *types.Header) (common.Address, error) {
 	return ecrecover(header, c.engine.signatures)
+}
+
+func deployCoLoaContracts(chain consensus.ChainReader, header *types.Header, state *state.StateDB) error {
+	// Deploy Seigniorage Contract
+	{
+		// Generate contract code and data using a simulated backend
+		code, storage, err := deployer.DeployContract(func(sim *backends.SimulatedBackend, auth *bind.TransactOpts) (common.Address, error) {
+			address, _, _, err := endurio.DeploySeigniorage(auth, sim,
+				new(big.Int).SetUint64(chain.Config().Dccs.AbsorptionDuration),
+				new(big.Int).SetUint64(chain.Config().Dccs.AbsorptionExpiration),
+				new(big.Int).SetUint64(chain.Config().Dccs.SlashingDuration),
+				new(big.Int).SetUint64(chain.Config().Dccs.LockdownExpiration),
+			)
+			return address, err
+		})
+		if err != nil {
+			return err
+		}
+
+		// Deploy only, no upgrade
+		deployer.CopyContractToAddress(state, params.SeigniorageAddress, code, storage, false)
+		log.Info("⚙ Contract deployed successful", "contract", "Seigniorage")
+	}
+
+	// Deploy VolatileToken Contract
+	{
+		// Generate contract code and data using a simulated backend
+		code, storage, err := deployer.DeployContract(func(sim *backends.SimulatedBackend, auth *bind.TransactOpts) (common.Address, error) {
+			address, _, _, err := volatile.DeployVolatileToken(auth, sim, params.SeigniorageAddress, common.Address{}, common.Big0)
+			return address, err
+		})
+		if err != nil {
+			return err
+		}
+
+		// Deploy only, no upgrade
+		deployer.CopyContractToAddress(state, params.VolatileTokenAddress, code, storage, false)
+		log.Info("⚙ Contract deployed successful", "contract", "VolatileToken")
+	}
+
+	// Deploy StableToken Contract
+	{
+		// Generate contract code and data using a simulated backend
+		code, storage, err := deployer.DeployContract(func(sim *backends.SimulatedBackend, auth *bind.TransactOpts) (common.Address, error) {
+			address, _, _, err := stable.DeployStableToken(auth, sim, params.SeigniorageAddress, common.Address{}, common.Big0)
+			return address, err
+		})
+		if err != nil {
+			return err
+		}
+
+		// Deploy only, no upgrade
+		deployer.CopyContractToAddress(state, params.StableTokenAddress, code, storage, false)
+		log.Info("⚙ Contract deployed successful", "contract", "StableToken")
+	}
+
+	// Link them together
+	{
+		backend := backends.NewRealBackend(chain, header, state, nil)
+		seign, err := endurio.NewSeigniorage(params.SeigniorageAddress, backend)
+		if err != nil {
+			log.Error("Failed to create new Seigniorage contract executor", "err", err)
+			return err
+		}
+
+		consensusTransactOpts := &bind.TransactOpts{
+			GasLimit: math.MaxUint64, // it's over 9000
+			Signer: func(_ types.Signer, _ common.Address, tx *types.Transaction) (*types.Transaction, error) {
+				return tx, nil
+			},
+		}
+
+		_, err = seign.RegisterTokens(consensusTransactOpts, params.VolatileTokenAddress, params.StableTokenAddress)
+		if err != nil {
+			log.Error("Failed to execute Seigniorage.RegisterTokens", "err", err)
+			return err
+		}
+		state.Commit(false)
+	}
+	return nil
 }

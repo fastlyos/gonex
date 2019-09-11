@@ -144,12 +144,16 @@ type Dccs struct {
 	signFn SignerFn       // Signer function to authorize hashes with
 	lock   sync.RWMutex   // Protects the signer fields
 
+	// CoLoa hard-fork
 	sealingQueueCache *lru.ARCCache // SealingQueue of recent blocks
 	extDataCache      *lru.ARCCache // ExtendedData of recent blocks
 	anchorExtraCache  *lru.ARCCache // Recently assembled anchor extra bytes
 
 	queueShuffler     *vdf.Delayer // Delayer for sealer shuffling seed
 	queueShufflerOnce sync.Once    // Lazy initilization for queueShuffler
+
+	priceEngine     *PriceEngine
+	priceEngineOnce sync.Once
 }
 
 // New creates a Dccs proof-of-foundation consensus engine with the initial
@@ -269,7 +273,11 @@ func (d *Dccs) Prepare(chain consensus.ChainReader, header *types.Header) error 
 // Initialize implements the consensus.Engine
 func (d *Dccs) Initialize(chain consensus.ChainReader, header *types.Header, state *state.StateDB) (types.Transactions, types.Receipts, error) {
 	if chain.Config().IsCoLoa(header.Number) {
-		return nil, nil, nil
+		context := Context{
+			chain:  chain,
+			engine: d,
+		}
+		return context.initialize2(header, state)
 	}
 	return nil, nil, nil
 }
