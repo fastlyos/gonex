@@ -96,9 +96,6 @@ type RandomData []byte
 
 func bytesToRandomData(extra []byte) (RandomData, int) {
 	size := len(extra)
-	if size == 0 {
-		return nil, 0
-	}
 	if size < 1+randomSeedSize {
 		return nil, 0
 	}
