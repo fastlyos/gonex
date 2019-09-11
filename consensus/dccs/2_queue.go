@@ -277,7 +277,7 @@ func (c *Context) getSealingQueue(parentHash common.Hash) (*SealingQueue, error)
 		n := number - i
 		header := c.getHeaderByNumber(n)
 		if header == nil {
-			log.Error("getSealingQueue: getAvailableHeader returns nil", "n", n, "len(parents)", len(c.parents))
+			log.Error("getSealingQueue: getHeaderByNumber returns nil", "n", n, "len(parents)", len(c.parents))
 			return nil, errUnknownBlock
 		}
 		sealer, err := c.ecrecover(header)

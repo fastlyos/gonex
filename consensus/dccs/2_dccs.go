@@ -227,7 +227,7 @@ func (c *Context) verifyCascadingFields2() error {
 			log.Error("Invalid price data in block", "number", number, "price", price.Rat().RatString())
 			return errInvalidPriceData
 		} else {
-			log.Info("Block price data found", "number", number, "price", price)
+			log.Info("Block price data found", "number", number, "price", price.Rat().RatString())
 		}
 	} else if price != nil {
 		return errUnexpectPriceData
@@ -435,13 +435,13 @@ func (c *Context) prepare2(header *types.Header) error {
 	// request the new vdf calculation after each zero block nonce
 	if parent.Nonce == (types.BlockNonce{}) {
 		input := parent.Hash()
-		log.Info("Requesting for new random seed calculation", "input", input)
+		log.Info("Requesting new random seed", "input", common.Bytes2Hex(input[:]))
 		c.engine.queueShuffler.Request(input[:], c.engine.config.RandomSeedIteration)
 	} else {
 		// request the first VDF task after the node started
 		c.engine.queueShufflerOnce.Do(func() {
 			input := c.getChainRandomInput(parent)
-			log.Info("Requesting for random seed calculation", "input", input)
+			log.Info("First request for random seed", "input", common.Bytes2Hex(input[:]))
 			c.engine.queueShuffler.Request(input[:], c.engine.config.RandomSeedIteration)
 		})
 	}
