@@ -27,7 +27,6 @@ import (
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/common/math"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/params"
 )
 
 // Storage represents a contract's storage.
@@ -141,7 +140,6 @@ func (l *StructLogger) CaptureStart(from common.Address, to common.Address, crea
 func (l *StructLogger) CaptureState(env *EVM, pc uint64, op OpCode, gas, cost uint64, memory *Memory, stack *Stack, contract *Contract, depth int, err error) error {
 	// check if already accumulated the specified number of logs
 	if l.cfg.Limit != 0 && l.cfg.Limit <= len(l.logs) {
-		env.LogFailure(contract.Address(), params.TopicError, params.ErrorLogTraceLimitReached)
 		return ErrTraceLimitReached
 	}
 

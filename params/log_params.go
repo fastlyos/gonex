@@ -35,7 +35,6 @@ const (
 	ErrorLogInvalidJump              = "invalid jump destination"
 	ErrorLogCodeStoreOutOfGas        = "contract creation code storage out of gas"
 	ErrorLogDepth                    = "max call depth exceeded"
-	ErrorLogTraceLimitReached        = "the number of logs reached the specified limit"
 	ErrorLogInsufficientBalance      = "insufficient balance for transfer"
 	ErrorLogContractAddressCollision = "contract address collision"
 )
