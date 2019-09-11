@@ -133,6 +133,9 @@ func ApplyTransaction(config *params.ChainConfig, bc ChainContext, author *commo
 	}
 	// Set the receipt logs and create a bloom for filtering
 	receipt.Logs = statedb.GetLogs(tx.Hash())
+	if len(vmenv.Logs) > 0 {
+		receipt.Logs = append(receipt.Logs, vmenv.Logs...)
+	}
 	receipt.Bloom = types.CreateBloom(types.Receipts{receipt})
 	receipt.BlockHash = statedb.BlockHash()
 	receipt.BlockNumber = header.Number
