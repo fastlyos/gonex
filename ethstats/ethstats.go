@@ -555,9 +555,10 @@ func (s *Service) assembleBlockStats(block *types.Block) *blockStats {
 
 		if s.eth.BlockChain().Config().IsCoLoa(header.Number) {
 			d, _ := s.engine.(*dccs.Dccs)
+			c := dccs.NewContext(d, s.eth.BlockChain())
 			number := header.Number.Uint64()
-			price = d.PriceEngine().BlockPriceStat(s.eth.BlockChain(), number)
-			priceMedian = d.PriceEngine().MedianPriceStat(s.eth.BlockChain(), number)
+			price = c.BlockPriceStat(number)
+			priceMedian = c.MedianPriceStat(number)
 			toAbsorb = dccs.RemainToAbsorbStat(s.eth.BlockChain(), number)
 			absorbed = dccs.AbsorbedStat(s.eth.BlockChain(), number)
 			supplySTB = dccs.StableSupplyStat(s.eth.BlockChain(), number)

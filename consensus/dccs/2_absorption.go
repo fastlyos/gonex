@@ -104,6 +104,7 @@ func OnBlockInitialized(chain consensus.ChainReader, header *types.Header, state
 	root := state.IntermediateRoot(chain.Config().IsEIP158(header.Number)).Bytes()
 	receipt := types.NewReceipt(root, failed, 0)
 	receipt.Logs = state.GetLogs(emptyHash)
+	// TODO: include failure log here
 	receipt.Bloom = types.CreateBloom(types.Receipts{receipt})
 
 	return types.Transactions{tx}, types.Receipts{receipt}, nil

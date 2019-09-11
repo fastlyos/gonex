@@ -19,14 +19,15 @@ package dccs
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"math/big"
 	"sort"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
+	"github.com/ethereum/go-ethereum/rlp"
 	lru "github.com/hashicorp/golang-lru"
 )
 
@@ -49,7 +50,6 @@ type PriceEngine struct {
 	headerPrices *lru.Cache // header price: hash -> Price
 	medianPrices *lru.Cache // calculated median price: hash -> Price
 	ttl          time.Duration
-	config       *params.DccsConfig
 }
 
 func newPriceEngine(conf *params.DccsConfig) *PriceEngine {
@@ -65,7 +65,6 @@ func newPriceEngine(conf *params.DccsConfig) *PriceEngine {
 		feeder: &Feeder{},
 		ticker: time.NewTicker(priceSamplingInterval / 3),
 		ttl:    ttl,
-		config: conf,
 	}
 
 	var err error
@@ -103,24 +102,27 @@ func (a ByPrice) Less(i, j int) bool { return a[i].Rat().Cmp(a[j].Rat()) < 0 }
 func (a ByPrice) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
 
 // CalcMedianPrice calculates the median price of a price block and cache it.
-func (e *PriceEngine) CalcMedianPrice(chain consensus.ChainReader, number uint64) (*Price, error) {
-	if !e.config.IsPriceBlock(number) {
+// TODO: optimize rolling median calculation
+func (c *Context) CalcMedianPrice(number uint64) (*Price, error) {
+	if !c.engine.config.IsPriceBlock(number) {
 		// not a price block
 		return nil, errors.New("Not a price block")
 	}
-	if number > chain.CurrentHeader().Number.Uint64() {
+	if number > c.chain.CurrentHeader().Number.Uint64() {
 		return nil, errors.New("Block number too high")
 	}
-	// TODO: use context to get header
-	header := chain.GetHeaderByNumber(number)
+	header := c.getHeaderByNumber(number)
+	e := c.engine.PriceEngine()
 	if median, ok := e.medianPrices.Get(header.Hash()); ok {
 		// cache found
 		return median.(*Price), nil
 	}
-	cap := int(e.config.PriceSamplingDuration / e.config.PriceSamplingInterval)
+	samplingDuration := c.engine.config.PriceSamplingDuration
+	samplingInterval := c.engine.config.PriceSamplingInterval
+	cap := int(samplingDuration / samplingInterval)
 	prices := make([]*Price, 0, cap)
-	for n := number; n > number-e.config.PriceSamplingDuration; n -= e.config.PriceSamplingInterval {
-		price := e.GetBlockPrice(chain, n)
+	for n := number; n > number-samplingDuration; n -= samplingInterval {
+		price := c.GetBlockPrice(n)
 		if price != nil {
 			prices = append(prices, price)
 		}
@@ -152,27 +154,30 @@ func medianPrice(prices []*Price, minValues int) (*Price, error) {
 }
 
 // GetBlockPrice returns the price encoded in a block header extra data
-func (e *PriceEngine) GetBlockPrice(chain consensus.ChainReader, number uint64) *Price {
-	if !e.config.IsPriceBlock(number) {
+func (c *Context) GetBlockPrice(number uint64) *Price {
+	if !c.engine.config.IsPriceBlock(number) {
 		// not a price block
 		return nil
 	}
-	header := chain.GetHeaderByNumber(number)
+	header := c.getHeaderByNumber(number)
 	if header == nil {
-		log.Error("PriceEngine.GetBlockPrice: failed to get header by number ", "number", number)
+		log.Error("failed to get header by number ", "number", number)
 		return nil
 	}
 	hash := header.Hash()
+	e := c.engine.PriceEngine()
 	if price, ok := e.headerPrices.Get(hash); ok {
 		// cache found
 		return price.(*Price)
 	}
-	price := PriceDecodeFromExtra(header.Extra)
-	if price == nil {
-		log.Error("PriceEngine.GetBlockPrice: failed to decode price from header extra", "number", number, "extra", header.Extra)
+	price, err := c.getPrice(header)
+	if err != nil {
+		log.Error("failed to get price from header", "number", number, "extra", common.Bytes2Hex(header.Extra), "err", err)
 		return nil
 	}
-	log.Trace("Header block price", "number", number, "price", price.Rat().RatString())
+	if price != nil {
+		log.Trace("Header block price", "number", number, "price", price.Rat().RatString())
+	}
 	e.headerPrices.Add(hash, price)
 	return price
 }
@@ -223,39 +228,35 @@ func (p *Price) Rat() *big.Rat {
 	return (*big.Rat)(p)
 }
 
-// PriceDecodeFromExtra returns the price encoded in Header's extra
-// extra = [vanity(32), price(...), signature(65)]
-func PriceDecodeFromExtra(extra []byte) *Price {
-	extraSuffix := len(extra) - extraSeal
-	extraBytes := extra[extraVanity:extraSuffix]
-	return PriceDecode(extraBytes)
+// EncodeRLP implements the rlp.Encoder interface.
+func (p *Price) EncodeRLP(w io.Writer) error {
+	a, err := rlp.EncodeToBytes(p.Rat().Num())
+	if err != nil {
+		return err
+	}
+	b, err := rlp.EncodeToBytes(p.Rat().Denom())
+	if err != nil {
+		return err
+	}
+	w.Write(a)
+	w.Write(b)
+	return nil
 }
 
-// PriceDecode returns the price encoded in Header's extra
-func PriceDecode(bytes []byte) *Price {
-	if len(bytes) == 0 {
-		return nil
+// DecodeRLP implements the rlp.Decoder interface.
+func (p *Price) DecodeRLP(s *rlp.Stream) error {
+	var a, b big.Int
+	if err := s.Decode(&a); err != nil {
+		return err
 	}
-	var rat big.Rat
-	err := rat.GobDecode(bytes)
-	if err != nil {
-		log.Info("Input bytes array is not price value", "bytes", bytes, "error", err)
-		return nil
+	if err := s.Decode(&b); err != nil {
+		return err
 	}
-	return (*Price)(&rat)
-}
-
-// PriceEncode encodes the price data in Header's extra
-func PriceEncode(price *Price) []byte {
-	if price == nil || (*big.Rat)(price).Sign() == 0 {
-		return nil
+	if b.Sign() == 0 {
+		return errInvalidPriceData
 	}
-	bytes, err := (*big.Rat)(price).GobEncode()
-	if err != nil {
-		log.Info("Failed to encode price data", "price", price, "error", err)
-		return nil
-	}
-	return bytes
+	p.Rat().SetFrac(&a, &b)
+	return nil
 }
 
 // PriceFromString decodes the price string fed from feeder service
@@ -268,11 +269,11 @@ func PriceFromString(s string) *Price {
 }
 
 // BlockPriceStat returns ethstats data for block price
-func (e *PriceEngine) BlockPriceStat(chain consensus.ChainReader, number uint64) string {
-	if !e.config.IsPriceBlock(number) {
+func (c *Context) BlockPriceStat(number uint64) string {
+	if !c.engine.config.IsPriceBlock(number) {
 		return ""
 	}
-	price := e.GetBlockPrice(chain, number)
+	price := c.GetBlockPrice(number)
 	if price == nil {
 		return "0"
 	}
@@ -280,11 +281,11 @@ func (e *PriceEngine) BlockPriceStat(chain consensus.ChainReader, number uint64)
 }
 
 // MedianPriceStat returns ethstats data for median price
-func (e *PriceEngine) MedianPriceStat(chain consensus.ChainReader, number uint64) string {
-	if !e.config.IsPriceBlock(number) {
+func (c *Context) MedianPriceStat(number uint64) string {
+	if !c.engine.config.IsPriceBlock(number) {
 		return ""
 	}
-	price, _ := e.CalcMedianPrice(chain, number)
+	price, _ := c.CalcMedianPrice(number)
 	if price == nil {
 		return "0"
 	}

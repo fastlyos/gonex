@@ -273,7 +273,11 @@ func (d *Dccs) Prepare(chain consensus.ChainReader, header *types.Header) error 
 // Initialize implements the consensus.Engine
 func (d *Dccs) Initialize(chain consensus.ChainReader, header *types.Header, state *state.StateDB) (types.Transactions, types.Receipts, error) {
 	if chain.Config().IsCoLoa(header.Number) {
-		return d.initialize2(chain, header, state)
+		context := Context{
+			chain:  chain,
+			engine: d,
+		}
+		return context.initialize2(header, state)
 	}
 	return nil, nil, nil
 }
