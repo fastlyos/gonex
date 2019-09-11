@@ -71,6 +71,14 @@ type Context struct {
 	engine  *Dccs                 // shared config and caches
 }
 
+func NewContext(engine *Dccs, chain consensus.ChainReader) *Context {
+	context := Context{
+		chain:  chain,
+		engine: engine,
+	}
+	return &context
+}
+
 // verifyHeader2 checks whether a header conforms to the consensus rules.The
 // caller may optionally pass in a batch of parents (ascending order) to avoid
 // looking those up from the database. This is useful for concurrently verifying
