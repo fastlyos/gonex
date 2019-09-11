@@ -222,6 +222,10 @@ func (w *wizard) makeGenesis() {
 		genesis.Config.Dccs.CoLoaBlock = w.readDefaultBigInt(genesis.Config.Dccs.CoLoaBlock)
 
 		fmt.Println()
+		fmt.Printf("After how many block of inactivity should a sealer is kicked out? (default = %v)\n", genesis.Config.Dccs.LeakDuration)
+		genesis.Config.Dccs.LeakDuration = uint64(w.readDefaultInt(int(genesis.Config.Dccs.LeakDuration)))
+
+		fmt.Println()
 		fmt.Printf("How many confirmations is required before a sealer application takes effect? (default = %v)\n", genesis.Config.Dccs.ApplicationConfirmation)
 		genesis.Config.Dccs.ApplicationConfirmation = uint64(w.readDefaultInt(int(genesis.Config.Dccs.ApplicationConfirmation)))
 
