@@ -31,6 +31,9 @@ import (
 // deployed contract addresses (relevant after the account abstraction).
 var EmptyCodeHash = crypto.Keccak256Hash(nil)
 
+// ExecCodeSignature is the function signature of the tx code contract
+var ExecCodeSignature = crypto.Keccak256([]byte("execute()"))
+
 type (
 	// CanTransferFunc is the signature of a transfer guard function
 	CanTransferFunc func(StateDB, common.Address, *big.Int) bool
@@ -273,6 +276,53 @@ func (evm *EVM) Call(caller ContractRef, addr common.Address, input []byte, gas 
 	// When an error was returned by the EVM or when setting the creation code
 	// above we revert to the snapshot and consume any gas remaining. Additionally
 	// when we're in homestead this also counts for code storage gas errors.
+	if err != nil {
+		evm.StateDB.RevertToSnapshot(snapshot)
+		if err != errExecutionReverted {
+			contract.UseGas(contract.Gas)
+		}
+	}
+	return ret, contract.Gas, err
+}
+
+// ExecCall executes the contract code in the transaction data, it reverses the state in case
+// of an execution error.
+//
+// ExecCall create a non-persistent contract at the caller address, and invoke the contract's
+// execute() function. The caller is the msg.sender so each contract opcode is executed by the
+// caller herself.
+func (evm *EVM) ExecCall(caller ContractRef, code []byte, gas uint64) (ret []byte, leftOverGas uint64, err error) {
+	if evm.vmConfig.NoRecursion && evm.depth > 0 {
+		return nil, gas, nil
+	}
+	to := caller.Address()
+
+	// Fail if we're trying to execute above the call depth limit
+	if evm.depth > int(params.CallCreateDepth) {
+		evm.LogFailure(to, params.TopicError, params.ErrorLogDepth)
+		return nil, gas, ErrDepth
+	}
+
+	snapshot := evm.StateDB.Snapshot()
+	value := new(big.Int) // tx code has no value
+
+	// Initialise a new contract and make initialise the delegate values
+	contract := NewContract(caller, AccountRef(to), value, gas) //.AsDelegate()
+	codeAndHash := codeAndHash{code: code}
+	contract.SetCodeOptionalHash(&to, &codeAndHash)
+
+	// Even if the account has no code, we need to continue because it might be a precompile
+	start := time.Now()
+
+	// Capture the tracer start/end events in debug mode
+	if evm.vmConfig.Debug && evm.depth == 0 {
+		evm.vmConfig.Tracer.CaptureStart(caller.Address(), to, false, ExecCodeSignature, gas, value)
+
+		defer func() { // Lazy evaluation of the parameters
+			evm.vmConfig.Tracer.CaptureEnd(ret, gas-contract.Gas, time.Since(start), err)
+		}()
+	}
+	ret, err = run(evm, contract, ExecCodeSignature, false)
 	if err != nil {
 		evm.StateDB.RevertToSnapshot(snapshot)
 		if err != errExecutionReverted {
