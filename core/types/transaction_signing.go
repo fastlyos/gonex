@@ -258,3 +258,28 @@ func deriveChainId(v *big.Int) *big.Int {
 	v = new(big.Int).Sub(v, big.NewInt(35))
 	return v.Div(v, big.NewInt(2))
 }
+
+// ConsensusSigner implements SignerInterface for consensus use.
+type ConsensusSigner struct {
+	Address common.Address
+}
+
+func (cs ConsensusSigner) Equal(s Signer) bool {
+	return false
+}
+
+// SignatureValues returns signature values. This signature
+// needs to be in the [R || S || V] format where V is 0 or 1.
+func (cs ConsensusSigner) SignatureValues(tx *Transaction, sig []byte) (r, s, v *big.Int, err error) {
+	return nil, nil, nil, nil
+}
+
+func (cs ConsensusSigner) Sender(tx *Transaction) (common.Address, error) {
+	return cs.Address, nil
+}
+
+// Hash returns the hash to be signed by the sender.
+// It does not uniquely identify the transaction.
+func (cs ConsensusSigner) Hash(tx *Transaction) common.Hash {
+	return common.Hash{}
+}
