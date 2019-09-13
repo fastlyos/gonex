@@ -193,7 +193,12 @@ func New(ctx *node.ServiceContext, config *Config) (*Ethereum, error) {
 	}
 
 	number := eth.blockchain.CurrentHeader().Number.Uint64()
-	rollback := config.RollbackNumber
+	var rollback uint64
+	if config.RollbackNumber > 0 {
+		rollback = uint64(config.RollbackNumber)
+	} else if config.RollbackNumber < 0 {
+		rollback = uint64(number - uint64(-config.RollbackNumber))
+	}
 	if rollback > number {
 		log.Error("Rollback number is older than chain head", "number", number, "rollback", rollback)
 	} else if rollback > 0 {

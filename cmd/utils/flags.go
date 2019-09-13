@@ -236,7 +236,7 @@ var (
 		Name:  "override.istanbul",
 		Usage: "Manually specify Istanbul fork-block, overriding the bundled setting",
 	}
-	RollbackFlag = cli.Uint64Flag{
+	RollbackFlag = cli.Int64Flag{
 		Name:  "rollback",
 		Usage: "Block number to rollback the chain before starting",
 	}
