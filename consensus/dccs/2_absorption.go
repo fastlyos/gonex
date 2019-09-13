@@ -20,7 +20,11 @@ import (
 	"math"
 	"math/big"
 
-	"github.com/ethereum/go-ethereum/accounts/abi/bind"
+	"github.com/ethereum/go-ethereum/core/vm"
+
+	"github.com/ethereum/go-ethereum/core"
+	"github.com/ethereum/go-ethereum/crypto"
+
 	"github.com/ethereum/go-ethereum/accounts/abi/bind/backends"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus"
@@ -35,11 +39,13 @@ import (
 
 var (
 	emptyHash = common.Hash{}
+
+	onBlockInitializedSignature = crypto.Keccak256([]byte("onBlockInitialized(uint256)"))[:4]
 )
 
 // OnBlockInitialized handles supply absorption on each block initialization
-func OnBlockInitialized(chain consensus.ChainReader, header *types.Header, state *state.StateDB, medianPrice *Price) (types.Transactions, types.Receipts, error) {
-	backend := backends.NewRealBackend(chain, header, state, nil) // consensus only
+func (c *Context) OnBlockInitialized(header *types.Header, state *state.StateDB, medianPrice *Price) (types.Transactions, types.Receipts, error) {
+	backend := backends.NewRealBackend(c.chain, header, state, nil) // consensus only
 	target := common.Big0
 
 	if medianPrice != nil {
@@ -71,41 +77,35 @@ func OnBlockInitialized(chain consensus.ChainReader, header *types.Header, state
 
 	log.Trace("VolatileToken supply before", "supply", supply)
 
-	seign, err := endurio.NewSeigniorage(params.SeigniorageAddress, backend)
+	tx := types.NewTransaction(0, params.SeigniorageAddress, common.Big0, math.MaxUint64, common.Big0,
+		append(onBlockInitializedSignature, common.BigToHash(target).Bytes()...))
+
+	gasPool := core.GasPool(math.MaxUint64)
+	var gasUsed uint64
+
+	snap := state.Snapshot()
+
+	state.Prepare(tx.Hash(), emptyHash, 0)
+	receipt, _, err := core.ApplyTransaction(c.chain.Config(), c.chain, &header.Coinbase, &gasPool, state, header, tx, &gasUsed,
+		vm.Config{
+			IgnoreNonce: true,
+			Signer: types.ConsensusSigner{
+				Address: params.ZeroAddress,
+			}})
+
 	if err != nil {
-		log.Error("Failed to create new Seigniorage contract executor", "err", err)
-		return nil, nil, err
-	}
-
-	consensusTransactOpts := &bind.TransactOpts{
-		GasLimit: math.MaxUint64, // it's over 9000
-		Signer: func(_ types.Signer, _ common.Address, tx *types.Transaction) (*types.Transaction, error) {
-			return tx, nil
-		},
-	}
-
-	state.Prepare(emptyHash, emptyHash, 0)
-
-	tx, err := seign.OnBlockInitialized(consensusTransactOpts, target)
-	if err != nil {
+		state.RevertToSnapshot(snap)
 		log.Error("Failed to execute Seigniorage.OnBlockInitialized", "err", err)
 		return nil, nil, err
 	}
-	failed := err != nil
 
-	newSupply, err := volatileToken.TotalSupply(nil)
+	newSupply, _ := volatileToken.TotalSupply(nil)
 	if newSupply.Cmp(supply) != 0 {
 		log.Trace("VolatileToken supply after", "new supply", newSupply, "change", new(big.Int).Sub(newSupply, supply))
 		stateObject := state.GetOrNewStateObject(params.VolatileTokenAddress)
 		stateObject.SetBalance(newSupply)
 		stateObject.CommitTrie(state.Database())
 	}
-
-	root := state.IntermediateRoot(chain.Config().IsEIP158(header.Number)).Bytes()
-	receipt := types.NewReceipt(root, failed, 0)
-	receipt.Logs = state.GetLogs(emptyHash)
-	// TODO: include failure log here
-	receipt.Bloom = types.CreateBloom(types.Receipts{receipt})
 
 	return types.Transactions{tx}, types.Receipts{receipt}, nil
 }
