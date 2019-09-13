@@ -17,6 +17,7 @@
 package vm
 
 import (
+	"fmt"
 	"math/big"
 	"sync/atomic"
 	"time"
@@ -24,6 +25,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
 )
 
@@ -322,7 +324,15 @@ func (evm *EVM) ExecCall(caller ContractRef, code []byte, gas uint64) (ret []byt
 			evm.vmConfig.Tracer.CaptureEnd(ret, gas-contract.Gas, time.Since(start), err)
 		}()
 	}
-	ret, err = run(evm, contract, ExecCodeSignature, false)
+	ret, err = func() (ret []byte, err error) {
+		defer func() {
+			if x := recover(); x != nil {
+				log.Error("panic in tx code execution", "reason", x)
+				err = fmt.Errorf("panic in tx code execution: %v", x)
+			}
+		}()
+		return run(evm, contract, ExecCodeSignature, false)
+	}()
 	if err != nil {
 		evm.StateDB.RevertToSnapshot(snapshot)
 		if err != errExecutionReverted {
