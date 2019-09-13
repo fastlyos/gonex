@@ -1378,8 +1378,7 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 
 // ChainCompare compares the weight of remote chain to local chain.
 func ChainCompare(remoteTD, localTD *big.Int, remoteHash, localHash common.Hash) int {
-	cmp := remoteTD.Cmp(localTD)
-	if cmp != 0 {
+	if cmp := remoteTD.Cmp(localTD); cmp != 0 {
 		return cmp
 	}
 	return bytes.Compare(localHash.Bytes(), remoteHash.Bytes())
@@ -1495,7 +1494,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 		)
 		for block != nil && err == ErrKnownBlock {
 			externTd = new(big.Int).Add(externTd, block.Difficulty())
-			if localTd.Cmp(externTd) < 0 {
+			if ChainCompare(localTd, externTd, current.Hash(), block.Hash()) < 0 {
 				break
 			}
 			log.Debug("Ignoring already known block", "number", block.Number(), "hash", block.Hash())
@@ -1787,7 +1786,7 @@ func (bc *BlockChain) insertSideChain(block *types.Block, it *insertIterator) (i
 	// If the externTd was larger than our local TD, we now need to reimport the previous
 	// blocks to regenerate the required state
 	localTd := bc.GetTd(current.Hash(), current.NumberU64())
-	if localTd.Cmp(externTd) > 0 {
+	if ChainCompare(localTd, externTd, current.Hash(), block.Hash()) > 0 {
 		log.Info("Sidechain written to disk", "start", it.first().NumberU64(), "end", it.previous().Number, "sidetd", externTd, "localtd", localTd)
 		return it.index, nil, nil, err
 	}
