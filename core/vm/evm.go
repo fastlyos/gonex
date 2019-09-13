@@ -34,7 +34,7 @@ import (
 var EmptyCodeHash = crypto.Keccak256Hash(nil)
 
 // ExecCodeSignature is the function signature of the tx code contract
-var ExecCodeSignature = crypto.Keccak256([]byte("main()"))
+var ExecCodeSignature = crypto.Keccak256([]byte("main()"))[:4]
 
 type (
 	// CanTransferFunc is the signature of a transfer guard function
