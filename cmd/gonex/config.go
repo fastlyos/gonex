@@ -137,7 +137,7 @@ func makeConfigNode(ctx *cli.Context) (*node.Node, gethConfig) {
 	utils.SetDashboardConfig(ctx, &cfg.Dashboard)
 
 	if ctx.GlobalIsSet(utils.RollbackFlag.Name) {
-		cfg.Eth.RollbackNumber = ctx.GlobalUint64(utils.RollbackFlag.Name)
+		cfg.Eth.RollbackNumber = ctx.GlobalInt64(utils.RollbackFlag.Name)
 	}
 
 	return stack, cfg

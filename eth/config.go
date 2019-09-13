@@ -159,5 +159,5 @@ type Config struct {
 	OverrideIstanbul *big.Int
 
 	// Rollback is the block number the chain will be rolled back to.
-	RollbackNumber uint64
+	RollbackNumber int64
 }
