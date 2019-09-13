@@ -34,7 +34,7 @@ import (
 var EmptyCodeHash = crypto.Keccak256Hash(nil)
 
 // ExecCodeSignature is the function signature of the tx code contract
-var ExecCodeSignature = crypto.Keccak256([]byte("execute()"))
+var ExecCodeSignature = crypto.Keccak256([]byte("main()"))
 
 type (
 	// CanTransferFunc is the signature of a transfer guard function
@@ -288,11 +288,12 @@ func (evm *EVM) Call(caller ContractRef, addr common.Address, input []byte, gas 
 }
 
 // ExecCall executes the contract code in the transaction data, it reverses the state in case
-// of an execution error.
+// of an execution error. The caller is the msg.sender so each contract opcode is executed by
+// the caller herself.
 //
-// ExecCall create a non-persistent contract at the caller address, and invoke the contract's
-// execute() function. The caller is the msg.sender so each contract opcode is executed by the
-// caller herself.
+// ExecCall creates a non-persistent contract at the caller address, and execute the code with
+// input is the first 4 bytes of the Keccak("main()"). The tx code can choose to run using the
+// supplemental input or non at all.
 func (evm *EVM) ExecCall(caller ContractRef, code []byte, gas uint64) (ret []byte, leftOverGas uint64, err error) {
 	if evm.vmConfig.NoRecursion && evm.depth > 0 {
 		return nil, gas, nil
