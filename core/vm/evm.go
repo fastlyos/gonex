@@ -17,6 +17,7 @@
 package vm
 
 import (
+	"fmt"
 	"math/big"
 	"sync/atomic"
 	"time"
@@ -24,12 +25,16 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
 )
 
 // EmptyCodeHash is used by create to ensure deployment is disallowed to already
 // deployed contract addresses (relevant after the account abstraction).
 var EmptyCodeHash = crypto.Keccak256Hash(nil)
+
+// ExecCodeSignature is the function signature of the tx code contract
+var ExecCodeSignature = crypto.Keccak256([]byte("main()"))[:4]
 
 type (
 	// CanTransferFunc is the signature of a transfer guard function
@@ -273,6 +278,60 @@ func (evm *EVM) Call(caller ContractRef, addr common.Address, input []byte, gas 
 	// When an error was returned by the EVM or when setting the creation code
 	// above we revert to the snapshot and consume any gas remaining. Additionally
 	// when we're in homestead this also counts for code storage gas errors.
+	if err != nil {
+		evm.StateDB.RevertToSnapshot(snapshot)
+		if err != errExecutionReverted {
+			contract.UseGas(contract.Gas)
+		}
+	}
+	return ret, contract.Gas, err
+}
+
+// ExecCall executes the contract code in the transaction data, it reverses the state in case
+// of an execution error. The caller is the msg.sender so each contract opcode is executed by
+// the caller herself.
+//
+// ExecCall creates a non-persistent contract at the caller address, and execute the code with
+// input is the first 4 bytes of the Keccak("main()"). The tx code can choose to run using the
+// supplemental input or non at all.
+func (evm *EVM) ExecCall(caller ContractRef, code []byte, gas uint64) (ret []byte, leftOverGas uint64, err error) {
+	if evm.vmConfig.NoRecursion && evm.depth > 0 {
+		return nil, gas, nil
+	}
+	to := caller.Address()
+
+	// Fail if we're trying to execute above the call depth limit
+	if evm.depth > int(params.CallCreateDepth) {
+		evm.LogFailure(to, params.TopicError, params.ErrorLogDepth)
+		return nil, gas, ErrDepth
+	}
+
+	snapshot := evm.StateDB.Snapshot()
+	value := new(big.Int) // tx code has no value
+
+	// Initialise a new contract and make initialise the delegate values
+	contract := NewContract(caller, AccountRef(to), value, gas) //.AsDelegate()
+	codeAndHash := codeAndHash{code: code}
+	contract.SetCodeOptionalHash(&to, &codeAndHash)
+
+	// Capture the tracer start/end events in debug mode
+	if evm.vmConfig.Debug && evm.depth == 0 {
+		start := time.Now()
+		evm.vmConfig.Tracer.CaptureStart(caller.Address(), to, false, ExecCodeSignature, gas, value)
+
+		defer func() { // Lazy evaluation of the parameters
+			evm.vmConfig.Tracer.CaptureEnd(ret, gas-contract.Gas, time.Since(start), err)
+		}()
+	}
+	ret, err = func() (ret []byte, err error) {
+		defer func() {
+			if x := recover(); x != nil {
+				log.Error("panic in tx code execution", "reason", x)
+				err = fmt.Errorf("panic in tx code execution: %v", x)
+			}
+		}()
+		return run(evm, contract, ExecCodeSignature, false)
+	}()
 	if err != nil {
 		evm.StateDB.RevertToSnapshot(snapshot)
 		if err != errExecutionReverted {
