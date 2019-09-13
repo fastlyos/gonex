@@ -545,8 +545,11 @@ func (c *Context) initialize2(header *types.Header, state *state.StateDB) (types
 	}
 
 	txs, receipts, err := OnBlockInitialized(c.chain, header, state, medianPrice)
+	if err != nil {
+		return nil, nil, err
+	}
 	header.Root = state.IntermediateRoot(c.chain.Config().IsEIP158(header.Number))
-	return txs, receipts, err
+	return txs, receipts, nil
 }
 
 // finalize2 implements consensus.Engine, ensuring no uncles are set, nor block
