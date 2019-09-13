@@ -314,11 +314,9 @@ func (evm *EVM) ExecCall(caller ContractRef, code []byte, gas uint64) (ret []byt
 	codeAndHash := codeAndHash{code: code}
 	contract.SetCodeOptionalHash(&to, &codeAndHash)
 
-	// Even if the account has no code, we need to continue because it might be a precompile
-	start := time.Now()
-
 	// Capture the tracer start/end events in debug mode
 	if evm.vmConfig.Debug && evm.depth == 0 {
+		start := time.Now()
 		evm.vmConfig.Tracer.CaptureStart(caller.Address(), to, false, ExecCodeSignature, gas, value)
 
 		defer func() { // Lazy evaluation of the parameters
