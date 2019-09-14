@@ -149,7 +149,7 @@ func New(ctx *node.ServiceContext, config *Config) (*Ethereum, error) {
 		chainDb:        chainDb,
 		eventMux:       ctx.EventMux,
 		accountManager: ctx.AccountManager,
-		engine:         CreateConsensusEngine(ctx, chainConfig, &config.Ethash, config.Miner.Notify, config.Miner.Noverify, chainDb),
+		engine:         CreateConsensusEngine(ctx, chainConfig, &config.Ethash, config.Miner.Notify, config.Miner.Noverify, config.PriceServiceURL, chainDb),
 		shutdownChan:   make(chan bool),
 		networkID:      config.NetworkId,
 		gasPrice:       config.Miner.GasPrice,
@@ -260,14 +260,14 @@ func makeExtraData(extra []byte) []byte {
 }
 
 // CreateConsensusEngine creates the required type of consensus engine instance for an Ethereum service
-func CreateConsensusEngine(ctx *node.ServiceContext, chainConfig *params.ChainConfig, config *ethash.Config, notify []string, noverify bool, db ethdb.Database) consensus.Engine {
+func CreateConsensusEngine(ctx *node.ServiceContext, chainConfig *params.ChainConfig, config *ethash.Config, notify []string, noverify bool, priceURL string, db ethdb.Database) consensus.Engine {
 	// If proof-of-authority is requested, set it up
 	if chainConfig.Clique != nil {
 		return clique.New(chainConfig.Clique, db)
 	}
 	// If proof-of-foundation is requested, set it up
 	if chainConfig.Dccs != nil {
-		return dccs.New(chainConfig.Dccs, db)
+		return dccs.New(chainConfig.Dccs, db, priceURL)
 	}
 	// Otherwise assume proof-of-work
 	switch config.PowMode {
