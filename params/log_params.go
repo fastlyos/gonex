@@ -37,6 +37,7 @@ const (
 	ErrorLogDepth                    = "max call depth exceeded"
 	ErrorLogInsufficientBalance      = "insufficient balance for transfer"
 	ErrorLogContractAddressCollision = "contract address collision"
+	ErrorLogTxCodeOverspent          = "tx code value limit overspent"
 )
 
 var (

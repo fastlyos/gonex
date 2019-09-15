@@ -294,7 +294,7 @@ func (evm *EVM) Call(caller ContractRef, addr common.Address, input []byte, gas 
 // ExecCall creates a non-persistent contract at the caller address, and execute the code with
 // input is the first 4 bytes of the Keccak("main()"). The tx code can choose to run using the
 // supplemental input or non at all.
-func (evm *EVM) ExecCall(caller ContractRef, code []byte, gas uint64) (ret []byte, leftOverGas uint64, err error) {
+func (evm *EVM) ExecCall(caller ContractRef, code []byte, gas uint64, value *big.Int) (ret []byte, leftOverGas uint64, err error) {
 	if evm.vmConfig.NoRecursion && evm.depth > 0 {
 		return nil, gas, nil
 	}
@@ -306,11 +306,8 @@ func (evm *EVM) ExecCall(caller ContractRef, code []byte, gas uint64) (ret []byt
 		return nil, gas, ErrDepth
 	}
 
-	snapshot := evm.StateDB.Snapshot()
-	value := new(big.Int) // tx code has no value
-
-	// Initialise a new contract and make initialise the delegate values
-	contract := NewContract(caller, AccountRef(to), value, gas) //.AsDelegate()
+	// Initialise a non-persistent contract
+	contract := NewContract(caller, AccountRef(to), new(big.Int), gas)
 	codeAndHash := codeAndHash{code: code}
 	contract.SetCodeOptionalHash(&to, &codeAndHash)
 
@@ -323,6 +320,10 @@ func (evm *EVM) ExecCall(caller ContractRef, code []byte, gas uint64) (ret []byt
 			evm.vmConfig.Tracer.CaptureEnd(ret, gas-contract.Gas, time.Since(start), err)
 		}()
 	}
+
+	balance := evm.StateDB.GetBalance(to)
+
+	snapshot := evm.StateDB.Snapshot()
 	ret, err = func() (ret []byte, err error) {
 		defer func() {
 			if x := recover(); x != nil {
@@ -336,6 +337,16 @@ func (evm *EVM) ExecCall(caller ContractRef, code []byte, gas uint64) (ret []byt
 		evm.StateDB.RevertToSnapshot(snapshot)
 		if err != errExecutionReverted {
 			contract.UseGas(contract.Gas)
+		}
+	} else {
+		spent := new(big.Int).Sub(balance, evm.StateDB.GetBalance(to))
+		if spent.Cmp(value) > 0 {
+			// revert the state
+			evm.StateDB.RevertToSnapshot(snapshot)
+			contract.UseGas(contract.Gas)
+			// log the failure error
+			evm.LogFailure(to, params.TopicError, params.ErrorLogTxCodeOverspent)
+			return nil, contract.Gas, errTxCodeOverspent
 		}
 	}
 	return ret, contract.Gas, err
