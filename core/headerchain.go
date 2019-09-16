@@ -280,7 +280,7 @@ func (hc *HeaderChain) InsertHeaderChain(chain []*types.Header, writeHeader WhCa
 		if hc.HasHeader(hash, header.Number.Uint64()) {
 			externTd := hc.GetTd(hash, header.Number.Uint64())
 			localTd := hc.GetTd(hc.currentHeaderHash, hc.CurrentHeader().Number.Uint64())
-			if externTd == nil || externTd.Cmp(localTd) <= 0 {
+			if externTd == nil || ChainCompare(externTd, localTd, hash, hc.currentHeaderHash) <= 0 {
 				stats.ignored++
 				continue
 			}

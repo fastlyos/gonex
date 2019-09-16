@@ -277,6 +277,18 @@ func (c *Context) verifySeal2() error {
 	return nil
 }
 
+func (c *Context) getHeader(hash common.Hash, number uint64) *types.Header {
+	header := c.getHeaderByNumber(number)
+	if header != nil && header.Hash() == hash {
+		return header
+	}
+	header = c.getHeaderByHash(hash)
+	if header != nil && header.Number.Uint64() == number {
+		return header
+	}
+	return nil
+}
+
 // getHeaderByNumber returns either:
 // + the context head, if number == head.Number
 // + the header in parents if available (nessesary for batch headers processing)

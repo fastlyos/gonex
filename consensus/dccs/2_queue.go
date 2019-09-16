@@ -257,6 +257,7 @@ func (c *Context) getSealingQueue(parentHash common.Hash) (*SealingQueue, error)
 	}
 
 	var maxDiff uint64
+	hash := parentHash
 
 	// scan backward atmost LeakDurations blocks from number
 	for i := uint64(0); i < c.engine.config.LeakDuration; i++ {
@@ -275,9 +276,9 @@ func (c *Context) getSealingQueue(parentHash common.Hash) (*SealingQueue, error)
 		// TODO: optimization for leakage case
 
 		n := number - i
-		header := c.getHeaderByNumber(n)
+		header := c.getHeader(hash, n)
 		if header == nil {
-			log.Error("getSealingQueue: getHeaderByNumber returns nil", "n", n, "len(parents)", len(c.parents))
+			log.Error("Header not found", "number", n, "hash", hash, "len(parents)", len(c.parents))
 			return nil, errUnknownBlock
 		}
 		sealer, err := c.ecrecover(header)
@@ -295,6 +296,9 @@ func (c *Context) getSealingQueue(parentHash common.Hash) (*SealingQueue, error)
 		if i < minBlockToScan || len(recents) < int(maxDiff)/2 {
 			addRecent(sealer)
 		}
+
+		// next parent in the hash chain
+		hash = header.ParentHash
 	}
 
 	apps, err := c.crawlSealerApplications(parent)
