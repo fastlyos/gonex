@@ -19,6 +19,7 @@ package params
 import (
 	"encoding/binary"
 	"fmt"
+	"math"
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -93,12 +94,12 @@ var (
 			ThangLongBlock:  big.NewInt(15360000),
 			ThangLongEpoch:  3000,
 			// CoLoa hard-fork
-			CoLoaBlock:              big.NewInt(30000000),
+			CoLoaBlock:              new(big.Int).SetUint64(math.MaxUint64),
 			LeakDuration:            1024,
 			ApplicationConfirmation: 128,
 			RandomSeedIteration:     20000000, // around 128 seconds
 			PriceSamplingDuration:   7 * 24 * 60 * 60 / BlockSeconds,
-			PriceSamplingInterval:   10*60/BlockSeconds - 7,
+			PriceSamplingInterval:   10 * 60 / BlockSeconds,
 			AbsorptionDuration:      7 * 24 * 60 * 60 / BlockSeconds / 2,
 			AbsorptionExpiration:    7 * 24 * 60 * 60 / BlockSeconds,
 			SlashingDuration:        7 * 24 * 60 * 60 / BlockSeconds / 2,
@@ -151,6 +152,17 @@ var (
 			StakeLockHeight: 3000,
 			ThangLongBlock:  big.NewInt(300000),
 			ThangLongEpoch:  300,
+			// CoLoa hard-fork
+			CoLoaBlock:              new(big.Int).SetUint64(math.MaxUint64),
+			LeakDuration:            MainnetChainConfig.Dccs.LeakDuration / 4,
+			ApplicationConfirmation: MainnetChainConfig.Dccs.ApplicationConfirmation / 4,
+			RandomSeedIteration:     MainnetChainConfig.Dccs.RandomSeedIteration / 4,
+			PriceSamplingDuration:   MainnetChainConfig.Dccs.PriceSamplingDuration / 4,
+			PriceSamplingInterval:   MainnetChainConfig.Dccs.PriceSamplingInterval / 4,
+			AbsorptionDuration:      MainnetChainConfig.Dccs.AbsorptionDuration / 4,
+			AbsorptionExpiration:    MainnetChainConfig.Dccs.AbsorptionExpiration / 4,
+			SlashingDuration:        MainnetChainConfig.Dccs.SlashingDuration / 4,
+			LockdownExpiration:      MainnetChainConfig.Dccs.LockdownExpiration / 4,
 		},
 	}
 
