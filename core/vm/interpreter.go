@@ -24,6 +24,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/math"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
 )
@@ -41,6 +42,9 @@ type Config struct {
 	EVMInterpreter   string // External EVM interpreter options
 
 	ExtraEips []int // Additional EIPS that are to be enabled
+
+	Signer      types.Signer // Overriding tx signer
+	IgnoreNonce bool         // Bypass nonce check and increasement
 }
 
 // Interpreter is used to run Ethereum based contracts and will utilise the

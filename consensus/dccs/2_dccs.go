@@ -544,9 +544,12 @@ func (c *Context) initialize2(header *types.Header, state *state.StateDB) (types
 		log.Trace("Failed to calculate canonical median price", "err", err, "number", header.Number)
 	}
 
-	txs, receipts, err := OnBlockInitialized(c.chain, header, state, medianPrice)
+	txs, receipts, err := c.OnBlockInitialized(header, state, medianPrice)
+	if err != nil {
+		return nil, nil, err
+	}
 	header.Root = state.IntermediateRoot(c.chain.Config().IsEIP158(header.Number))
-	return txs, receipts, err
+	return txs, receipts, nil
 }
 
 // finalize2 implements consensus.Engine, ensuring no uncles are set, nor block

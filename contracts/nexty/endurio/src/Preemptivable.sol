@@ -14,6 +14,21 @@ contract Preemptivable is Absorbable {
     using absn for absn.Proposal;
     using absn for absn.Preemptive;
 
+    event Revoke(address maker);
+    event Propose(
+        address maker,
+        int256 amount,
+        uint256 stake,
+        uint256 lockdownExpiration,
+        uint256 slashingDuration
+    );
+    event Preemptive(
+        address maker,
+        uint256 stake,
+        uint256 lockdownExpiration,
+        uint256 unlockNumber
+    );
+
     address constant ZERO_ADDRESS = address(0x0);
 
     // adapting global default parameters, only used if proposal maker doesn't specify them
@@ -22,6 +37,7 @@ contract Preemptivable is Absorbable {
 
     // adapting global requirement
     uint internal globalSuccessRank = 0;
+    uint internal globalSuccessStake = 0;
 
     // proposal params must not lower than 1/3 of global params
     uint constant PARAM_TOLERANCE = 3;
@@ -82,7 +98,7 @@ contract Preemptivable is Absorbable {
             // unused
             reserve = bytes32(0);
 
-            propose(maker, value, amount, slashingDuration, lockdownExpiration);
+            propose(maker, amount, value, slashingDuration, lockdownExpiration);
             return;
         }
 
@@ -116,24 +132,23 @@ contract Preemptivable is Absorbable {
      */
     function propose(
         address maker,
-        uint stake,
         int amount,
+        uint stake,
         uint slashingDuration,
         uint lockdownExpiration
     )
         internal
     {
+        require(stake > globalSuccessStake - globalSuccessStake / PARAM_TOLERANCE, "stake too low");
+
         absn.Proposal memory proposal;
-        proposal.maker = maker;
-        proposal.stake = stake;
-        proposal.amount = amount;
-        proposal.number = block.number;
 
         if (slashingDuration > 0) {
             require(
                 slashingDuration >
                 globalSlashingDuration + globalSlashingDuration / PARAM_TOLERANCE,
                 "slashing duration param too long");
+            proposal.slashingDuration = slashingDuration;
         } else {
             proposal.slashingDuration = globalSlashingDuration;
         }
@@ -143,11 +158,24 @@ contract Preemptivable is Absorbable {
                 lockdownExpiration <
                 globalLockdownExpiration - globalLockdownExpiration / PARAM_TOLERANCE,
                 "lockdown duration param too short");
+            proposal.lockdownExpiration = lockdownExpiration;
         } else {
             proposal.lockdownExpiration = globalLockdownExpiration;
         }
 
+        proposal.maker = maker;
+        proposal.amount = amount;
+        proposal.stake = stake;
+        proposal.number = block.number;
         proposals.push(proposal);
+
+        emit Propose(
+            maker,
+            amount,
+            stake,
+            proposal.slashingDuration,
+            proposal.lockdownExpiration
+        );
     }
 
     function revoke(address maker) external {
@@ -156,12 +184,14 @@ contract Preemptivable is Absorbable {
         votesToClear.push(p.votes); // leave the job for consensus
         VolatileToken.transfer(p.maker, p.stake);
         proposals.remove(maker);
+        emit Revoke(maker);
     }
 
     function vote(address maker, bool up) external {
         require(proposals.has(maker), "no such proposal");
         absn.Proposal storage proposal = proposals.get(maker);
         proposal.vote(up);
+        // emit Vote(maker, up);
     }
 
     // check and trigger a new Preemptive when one is eligible
@@ -185,6 +215,7 @@ contract Preemptivable is Absorbable {
     // adapt the global params to the last winning preemptive
     function adaptParams(absn.Proposal storage proposal, uint rank) internal {
         globalSuccessRank = (globalSuccessRank + rank) >> 1;
+        globalSuccessStake = (globalSuccessStake + proposal.stake) >> 1;
         globalLockdownExpiration = (globalLockdownExpiration + proposal.lockdownExpiration) >> 1;
         globalSlashingDuration = (globalSlashingDuration + proposal.slashingDuration) >> 1;
     }
@@ -200,7 +231,15 @@ contract Preemptivable is Absorbable {
             block.number + proposal.lockdownExpiration
         );
         proposals.remove(proposal.maker);
-        triggerAbsorption(util.add(StablizeToken.totalSupply(), lockdown.amount), true);
+        uint supply = StablizeToken.totalSupply();
+        uint target = util.add(supply, lockdown.amount);
+        triggerAbsorption(target, supply, true, true);
+        emit Preemptive(
+            lockdown.maker,
+            lockdown.stake,
+            lockdown.slashingDuration,
+            lockdown.unlockNumber
+        );
     }
 
     // expensive calculation, only consensus can affort this

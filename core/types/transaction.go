@@ -243,6 +243,12 @@ func (tx *Transaction) AsMessage(s Signer) (Message, error) {
 		checkNonce: true,
 	}
 
+	if cs, consensus := s.(ConsensusSigner); consensus {
+		msg.from = cs.Address
+		msg.checkNonce = false
+		return msg, nil
+	}
+
 	var err error
 	msg.from, err = Sender(s, tx)
 	return msg, err
