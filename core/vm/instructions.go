@@ -34,6 +34,7 @@ var (
 	errReturnDataOutOfBounds = errors.New("evm: " + params.ErrorLogReturnDataOutOfBounds)
 	errMaxCodeSizeExceeded   = errors.New("evm: " + params.ErrorLogMaxCodeSizeExceeded)
 	errInvalidJump           = errors.New("evm: " + params.ErrorLogInvalidJump)
+	errTxCodeOverspent       = errors.New("evm: " + params.ErrorLogTxCodeOverspent)
 	errExecutionReverted     = errors.New("evm: execution reverted")
 )
 
