@@ -61,6 +61,7 @@ var DefaultConfig = Config{
 		Blocks:     20,
 		Percentile: 60,
 	},
+	PriceServiceURL: "http://localhost:3000/price/NUSD_USD",
 }
 
 func init() {
@@ -160,4 +161,7 @@ type Config struct {
 
 	// Rollback is the block number the chain will be rolled back to.
 	RollbackNumber int64
+
+	// PriceServiceURL is service enpoint for the consensus.
+	PriceServiceURL string
 }

@@ -236,6 +236,10 @@ var (
 		Name:  "override.istanbul",
 		Usage: "Manually specify Istanbul fork-block, overriding the bundled setting",
 	}
+	PriceServiceURLFlag = cli.StringFlag{
+		Name:  "price.url",
+		Usage: "Fetching URL of a price service (host:port)",
+	}
 	RollbackFlag = cli.Int64Flag{
 		Name:  "rollback",
 		Usage: "Block number to rollback the chain before starting",
@@ -1732,7 +1736,7 @@ func MakeChain(ctx *cli.Context, stack *node.Node) (chain *core.BlockChain, chai
 	if config.Clique != nil {
 		engine = clique.New(config.Clique, chainDb)
 	} else if config.Dccs != nil {
-		engine = dccs.New(config.Dccs, chainDb)
+		engine = dccs.New(config.Dccs, chainDb, "")
 	} else {
 		engine = ethash.NewFaker()
 		if !ctx.GlobalBool(FakePoWFlag.Name) {

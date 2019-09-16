@@ -158,6 +158,9 @@ func makeFullNode(ctx *cli.Context) *node.Node {
 	if ctx.GlobalIsSet(utils.OverrideIstanbulFlag.Name) {
 		cfg.Eth.OverrideIstanbul = new(big.Int).SetUint64(ctx.GlobalUint64(utils.OverrideIstanbulFlag.Name))
 	}
+	if ctx.GlobalIsSet(utils.PriceServiceURLFlag.Name) {
+		cfg.Eth.PriceServiceURL = ctx.GlobalString(utils.PriceServiceURLFlag.Name)
+	}
 	utils.RegisterEthService(stack, &cfg.Eth)
 
 	if ctx.GlobalBool(utils.DashboardEnabledFlag.Name) {

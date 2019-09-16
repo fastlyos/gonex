@@ -93,7 +93,7 @@ func NewContext(engine *Dccs, chain consensus.ChainReader) *Context {
 // PriceEngine creates and returns the PriceEngine singleton instance
 func (d *Dccs) PriceEngine() *PriceEngine {
 	d.priceEngineOnce.Do(func() {
-		d.priceEngine = newPriceEngine(d.config)
+		d.priceEngine = newPriceEngine(d.config, d.priceURL)
 	})
 	return d.priceEngine
 }

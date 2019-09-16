@@ -32,7 +32,6 @@ import (
 )
 
 const (
-	priceServiceURL      = "http://localhost:3000/price/NUSD_USD"
 	medianPriceCacheSize = 6
 )
 
@@ -46,13 +45,14 @@ type PriceData struct {
 // PriceEngine is the price feeding and managing engine
 type PriceEngine struct {
 	feeder       *Feeder
+	serviceURL   string
 	ticker       *time.Ticker
 	headerPrices *lru.Cache // header price: hash -> Price
 	medianPrices *lru.Cache // calculated median price: hash -> Price
 	ttl          time.Duration
 }
 
-func newPriceEngine(conf *params.DccsConfig) *PriceEngine {
+func newPriceEngine(conf *params.DccsConfig, priceServiceURL string) *PriceEngine {
 	priceSamplingInterval := time.Duration(conf.PriceSamplingInterval*conf.Period) * time.Second
 
 	// the longest time for a price to stay valid = max(blocktime, priceSamplingInterval / 2)
@@ -62,9 +62,10 @@ func newPriceEngine(conf *params.DccsConfig) *PriceEngine {
 	}
 
 	e := &PriceEngine{
-		feeder: &Feeder{},
-		ticker: time.NewTicker(priceSamplingInterval / 3),
-		ttl:    ttl,
+		feeder:     &Feeder{},
+		serviceURL: priceServiceURL,
+		ticker:     time.NewTicker(priceSamplingInterval / 3),
+		ttl:        ttl,
 	}
 
 	var err error
@@ -184,9 +185,9 @@ func (c *Context) GetBlockPrice(number uint64) *Price {
 
 // CurrentPrice returns the current un-expired data fed from price service
 func (e *PriceEngine) CurrentPrice() *Price {
-	data := e.feeder.getCurrent(priceServiceURL)
+	data := e.feeder.getCurrent(e.serviceURL)
 	if data == nil {
-		e.feeder.requestUpdate(priceServiceURL, parsePriceFn)
+		e.feeder.requestUpdate(e.serviceURL, parsePriceFn)
 		return nil
 	}
 	if time.Now().Sub(data.ResponseTimestamp) > e.ttl {
