@@ -45,9 +45,9 @@ var (
 	ExecAddress        = common.HexToAddress("0xcccccccccccccccccccccccccccccccccccccccc")
 	TokenAddress       = common.HexToAddress("0x2c783ad80ff980ec75468477e3dd9f86123ecbda") // NTF token contract address
 	// CoLoa contract addresses
-	SeigniorageAddress   = common.HexToAddress("0x0000000000000000000000000000000000123456") // Seigniorage contract address
-	VolatileTokenAddress = common.HexToAddress("0x0000000000000000000000000000000001234567") // MNTY token contract address
-	StableTokenAddress   = common.HexToAddress("0x0000000000000000000000000000000012345678") // NUSD token contract address
+	SeigniorageAddress   = common.HexToAddress("0x23456") // Seigniorage contract address
+	VolatileTokenAddress = common.HexToAddress("0x34567") // MNTY token contract address
+	StableTokenAddress   = common.HexToAddress("0x45678") // NUSD token contract address
 )
 
 // TrustedCheckpoints associates each known checkpoint with the genesis hash of
