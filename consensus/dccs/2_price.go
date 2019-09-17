@@ -107,7 +107,7 @@ func (a ByPrice) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
 func (c *Context) CalcMedianPrice(number uint64) (*Price, error) {
 	if !c.engine.config.IsPriceBlock(number) {
 		// not a price block
-		return nil, errors.New("Not a price block")
+		return nil, nil
 	}
 	if number > c.chain.CurrentHeader().Number.Uint64() {
 		return nil, errors.New("Block number too high")
