@@ -406,7 +406,7 @@ func (c *Context) prepareBeneficiary2(header *types.Header) {
 	// try the current active state first
 	state, err := c.chain.State()
 	if err == nil && state != nil {
-		hash := state.GetState(c.chain.Config().Dccs.Contract, key)
+		hash := state.GetState(params.GovernanceAddress, key)
 		if (hash != common.Hash{}) {
 			header.Coinbase = common.HexToAddress(hash.Hex())
 			return

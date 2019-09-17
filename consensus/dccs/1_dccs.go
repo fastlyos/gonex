@@ -227,13 +227,13 @@ func (d *Dccs) getStateSnapshot(chain consensus.ChainReader, header *types.Heade
 		log.Trace("Snapshot state not available", "number", number, "err", err)
 		return nil, errSnapshotNotAvailable
 	}
-	size := state.GetCodeSize(chain.Config().Dccs.Contract)
+	size := state.GetCodeSize(params.GovernanceAddress)
 	if size <= 0 || state.Error() != nil {
 		log.Trace("Snapshot contract state not available", "number", number, "err", state.Error())
 		return nil, errSnapshotNotAvailable
 	}
 	index := common.BigToHash(common.Big0)
-	result := state.GetState(chain.Config().Dccs.Contract, index)
+	result := state.GetState(params.GovernanceAddress, index)
 	var length int64
 	if (result == common.Hash{}) {
 		length = 0
@@ -245,7 +245,7 @@ func (d *Dccs) getStateSnapshot(chain consensus.ChainReader, header *types.Heade
 	key := crypto.Keccak256Hash(hexutil.MustDecode(index.String()))
 	for i := 0; i < len(signers); i++ {
 		log.Trace("key hash", "key", key)
-		singer := state.GetState(chain.Config().Dccs.Contract, key)
+		singer := state.GetState(params.GovernanceAddress, key)
 		signers[i] = common.HexToAddress(singer.Hex())
 		key = key.Plus()
 	}
@@ -441,7 +441,7 @@ func (d *Dccs) prepareBeneficiary(header *types.Header, chain consensus.ChainRea
 	if err != nil {
 		log.Error("Chain state not available", "number", number, "err", err)
 	} else if state != nil {
-		hash := state.GetState(chain.Config().Dccs.Contract, key)
+		hash := state.GetState(params.GovernanceAddress, key)
 		if (hash != common.Hash{}) {
 			header.Coinbase = common.HexToAddress(hash.Hex())
 			return
@@ -461,7 +461,7 @@ func (d *Dccs) prepareBeneficiary(header *types.Header, chain consensus.ChainRea
 		return
 	}
 
-	hash := state.GetState(chain.Config().Dccs.Contract, key)
+	hash := state.GetState(params.GovernanceAddress, key)
 	if (hash != common.Hash{}) {
 		header.Coinbase = common.HexToAddress(hash.Hex())
 	}
@@ -743,7 +743,7 @@ func deployConsensusContracts(state *state.StateDB, chainConfig *params.ChainCon
 			return err
 		}
 		// Deploy or update
-		deployContract(state, chainConfig.Dccs.Contract, code, storage, true)
+		deployContract(state, params.GovernanceAddress, code, storage, true)
 	}
 
 	return nil

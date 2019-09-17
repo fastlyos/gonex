@@ -351,14 +351,14 @@ func (d *Dccs) FinalizeAndAssemble(chain consensus.ChainReader, header *types.He
 // with.
 func (d *Dccs) Authorize(signer common.Address, signFn SignerFn, state *state.StateDB, header *types.Header) {
 	if d.config.IsThangLong(header.Number) {
-		size := state.GetCodeSize(d.config.Contract)
+		size := state.GetCodeSize(params.GovernanceAddress)
 		log.Info("smart contract size", "size", size)
 		if size > 0 && state.Error() == nil {
 			// Get token holder from coinbase
 			index := common.BigToHash(common.Big1).String()[2:]
 			coinbase := "0x000000000000000000000000" + signer.String()[2:]
 			key := crypto.Keccak256Hash(hexutil.MustDecode(coinbase + index))
-			result := state.GetState(d.config.Contract, key)
+			result := state.GetState(params.GovernanceAddress, key)
 
 			if (result == common.Hash{}) {
 				log.Warn("Validator is not in activation sealer set")

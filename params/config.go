@@ -44,6 +44,7 @@ var (
 	ZeroAddress        = common.HexToAddress("0x0000000000000000000000000000000000000000")
 	ExecAddress        = common.HexToAddress("0xcccccccccccccccccccccccccccccccccccccccc")
 	TokenAddress       = common.HexToAddress("0x2c783ad80ff980ec75468477e3dd9f86123ecbda") // NTF token contract address
+	GovernanceAddress  = common.HexToAddress("0x12345")
 	// CoLoa contract addresses
 	SeigniorageAddress   = common.HexToAddress("0x23456") // Seigniorage contract address
 	VolatileTokenAddress = common.HexToAddress("0x34567") // MNTY token contract address
@@ -86,8 +87,6 @@ var (
 		Dccs: &DccsConfig{
 			Period: BlockSeconds,
 			Epoch:  30000,
-			// Governance contract
-			Contract: common.HexToAddress("0x0000000000000000000000000000000000012345"),
 			// ThangLong hard-fork
 			StakeRequire:    50000,
 			StakeLockHeight: 30000,
@@ -145,8 +144,6 @@ var (
 		Dccs: &DccsConfig{
 			Period: 2,
 			Epoch:  30000,
-			// Governance contract
-			Contract: common.HexToAddress("0x0000000000000000000000000000000000012345"),
 			// ThangLong hard-fork
 			StakeRequire:    500,
 			StakeLockHeight: 3000,
@@ -305,7 +302,7 @@ var (
 	//
 	// This configuration is intentionally not using keyed fields to force anyone
 	// adding flags to the config to also have to set these fields.
-	AllDccsProtocolChanges = &ChainConfig{big.NewInt(1337), big.NewInt(0), nil, false, big.NewInt(0), common.Hash{}, big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), nil, nil, nil, nil, &DccsConfig{Period: 0, Epoch: 30000, ThangLongBlock: big.NewInt(0), ThangLongEpoch: 3000, Contract: common.HexToAddress("0x0")}}
+	AllDccsProtocolChanges = &ChainConfig{big.NewInt(1337), big.NewInt(0), nil, false, big.NewInt(0), common.Hash{}, big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), nil, nil, nil, nil, &DccsConfig{Period: 0, Epoch: 30000, ThangLongBlock: big.NewInt(0), ThangLongEpoch: 3000}}
 
 	TestChainConfig = &ChainConfig{big.NewInt(1), big.NewInt(0), nil, false, big.NewInt(0), common.Hash{}, big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), nil, nil, new(EthashConfig), nil, nil}
 	TestRules       = TestChainConfig.Rules(new(big.Int))
@@ -409,8 +406,6 @@ func (c *CliqueConfig) String() string {
 type DccsConfig struct {
 	Period uint64 `json:"period"` // Number of seconds between blocks to enforce
 	Epoch  uint64 `json:"epoch"`  // Epoch length to reset votes and checkpoint
-	// governance smart contract address
-	Contract common.Address `json:"contract,omitempty"`
 	// Governance contract stake params
 	StakeRequire    uint64 `json:"stakeRequire"`    // stake requirement
 	StakeLockHeight uint64 `json:"stakeLockHeight"` // lock time (in blocks) after leaving
@@ -471,10 +466,9 @@ func (c *DccsConfig) Snapshot(number uint64) uint64 {
 
 // String implements the stringer interface, returning the consensus engine details.
 func (c *DccsConfig) String() string {
-	return fmt.Sprintf("dccs {ThangLong: %v Epoch: %v Contract: %v CoLoa: %v LeakDuration: %v ApplicationConfirmation: %v RandomSeedIteration: %v PriceSamplingDuration: %v PriceSamplingInterval: %v AbsorptionDuration: %v AbsorptionExpiration: %v SlashingDuration: %v LockdownExpiration: %v}",
+	return fmt.Sprintf("dccs {ThangLong: %v Epoch: %v CoLoa: %v LeakDuration: %v ApplicationConfirmation: %v RandomSeedIteration: %v PriceSamplingDuration: %v PriceSamplingInterval: %v AbsorptionDuration: %v AbsorptionExpiration: %v SlashingDuration: %v LockdownExpiration: %v}",
 		c.ThangLongBlock,
 		c.ThangLongEpoch,
-		c.Contract.String(),
 		c.CoLoaBlock,
 		c.LeakDuration,
 		c.ApplicationConfirmation,
