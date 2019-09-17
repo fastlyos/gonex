@@ -539,7 +539,7 @@ func (c *Context) initialize2(header *types.Header, state *state.StateDB) (types
 		return nil, nil, nil
 	}
 
-	medianPrice, err := c.CalcMedianPrice(header.Number.Uint64() - params.CanonicalDepth)
+	medianPrice, err := c.CalcMedianPrice(header.Number.Uint64() - 1)
 	if err != nil {
 		log.Trace("Failed to calculate canonical median price", "err", err, "number", header.Number)
 	}
