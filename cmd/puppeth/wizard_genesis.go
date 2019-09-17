@@ -260,7 +260,7 @@ func (w *wizard) makeGenesis() {
 		// Read the address of the account to fund
 		if address := w.readAddress(); address != nil {
 			genesis.Alloc[*address] = core.GenesisAccount{
-				Balance: new(big.Int).Lsh(big.NewInt(1), 256-7), // 2^256 / 128 (allow many pre-funds without balance overflows)
+				Balance: common.Big1e27,
 			}
 			continue
 		}
