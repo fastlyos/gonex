@@ -406,7 +406,7 @@ func (c *Context) prepareBeneficiary2(header *types.Header) {
 	// try the current active state first
 	state, err := c.chain.State()
 	if err == nil && state != nil {
-		hash := state.GetState(c.chain.Config().Dccs.Contract, key)
+		hash := state.GetState(params.GovernanceAddress, key)
 		if (hash != common.Hash{}) {
 			header.Coinbase = common.HexToAddress(hash.Hex())
 			return
@@ -539,7 +539,7 @@ func (c *Context) initialize2(header *types.Header, state *state.StateDB) (types
 		return nil, nil, nil
 	}
 
-	medianPrice, err := c.CalcMedianPrice(header.Number.Uint64() - params.CanonicalDepth)
+	medianPrice, err := c.CalcMedianPrice(header.Number.Uint64() - 1)
 	if err != nil {
 		log.Trace("Failed to calculate canonical median price", "err", err, "number", header.Number)
 	}

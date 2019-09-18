@@ -27,6 +27,7 @@ import (
 	"github.com/ethereum/go-ethereum/eth/filters"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rpc"
 )
 
@@ -76,7 +77,7 @@ var _ filters.SimpleBackend = (*logFilterBackend)(nil)
 // the requests kept as is.
 func (c *Context) fetchSealerApplications(header *types.Header) ([]SealerApplication, error) {
 	logs, err := filters.BlockLogs(header,
-		[]common.Address{c.engine.config.Contract},
+		[]common.Address{params.GovernanceAddress},
 		[][]common.Hash{{joinedTopic, leftTopic}},
 		&logFilterBackend{
 			chain: c.chain,

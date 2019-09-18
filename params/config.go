@@ -19,6 +19,7 @@ package params
 import (
 	"encoding/binary"
 	"fmt"
+	"math"
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -43,10 +44,11 @@ var (
 	ZeroAddress        = common.HexToAddress("0x0000000000000000000000000000000000000000")
 	ExecAddress        = common.HexToAddress("0xcccccccccccccccccccccccccccccccccccccccc")
 	TokenAddress       = common.HexToAddress("0x2c783ad80ff980ec75468477e3dd9f86123ecbda") // NTF token contract address
+	GovernanceAddress  = common.HexToAddress("0x12345")
 	// CoLoa contract addresses
-	SeigniorageAddress   = common.HexToAddress("0x0000000000000000000000000000000000123456") // Seigniorage contract address
-	VolatileTokenAddress = common.HexToAddress("0x0000000000000000000000000000000001234567") // MNTY token contract address
-	StableTokenAddress   = common.HexToAddress("0x0000000000000000000000000000000012345678") // NUSD token contract address
+	SeigniorageAddress   = common.HexToAddress("0x23456") // Seigniorage contract address
+	VolatileTokenAddress = common.HexToAddress("0x34567") // MNTY token contract address
+	StableTokenAddress   = common.HexToAddress("0x45678") // NUSD token contract address
 )
 
 // TrustedCheckpoints associates each known checkpoint with the genesis hash of
@@ -85,20 +87,18 @@ var (
 		Dccs: &DccsConfig{
 			Period: BlockSeconds,
 			Epoch:  30000,
-			// Governance contract
-			Contract: common.HexToAddress("0x0000000000000000000000000000000000012345"),
 			// ThangLong hard-fork
 			StakeRequire:    50000,
 			StakeLockHeight: 30000,
 			ThangLongBlock:  big.NewInt(15360000),
 			ThangLongEpoch:  3000,
 			// CoLoa hard-fork
-			CoLoaBlock:              big.NewInt(30000000),
+			CoLoaBlock:              new(big.Int).SetUint64(math.MaxUint64),
 			LeakDuration:            1024,
 			ApplicationConfirmation: 128,
 			RandomSeedIteration:     20000000, // around 128 seconds
 			PriceSamplingDuration:   7 * 24 * 60 * 60 / BlockSeconds,
-			PriceSamplingInterval:   10*60/BlockSeconds - 7,
+			PriceSamplingInterval:   10 * 60 / BlockSeconds,
 			AbsorptionDuration:      7 * 24 * 60 * 60 / BlockSeconds / 2,
 			AbsorptionExpiration:    7 * 24 * 60 * 60 / BlockSeconds,
 			SlashingDuration:        7 * 24 * 60 * 60 / BlockSeconds / 2,
@@ -144,13 +144,22 @@ var (
 		Dccs: &DccsConfig{
 			Period: 2,
 			Epoch:  30000,
-			// Governance contract
-			Contract: common.HexToAddress("0x0000000000000000000000000000000000012345"),
 			// ThangLong hard-fork
 			StakeRequire:    500,
 			StakeLockHeight: 3000,
 			ThangLongBlock:  big.NewInt(300000),
 			ThangLongEpoch:  300,
+			// CoLoa hard-fork
+			CoLoaBlock:              new(big.Int).SetUint64(math.MaxUint64),
+			LeakDuration:            MainnetChainConfig.Dccs.LeakDuration / 4,
+			ApplicationConfirmation: MainnetChainConfig.Dccs.ApplicationConfirmation / 4,
+			RandomSeedIteration:     MainnetChainConfig.Dccs.RandomSeedIteration / 4,
+			PriceSamplingDuration:   MainnetChainConfig.Dccs.PriceSamplingDuration / 4,
+			PriceSamplingInterval:   MainnetChainConfig.Dccs.PriceSamplingInterval / 4,
+			AbsorptionDuration:      MainnetChainConfig.Dccs.AbsorptionDuration / 4,
+			AbsorptionExpiration:    MainnetChainConfig.Dccs.AbsorptionExpiration / 4,
+			SlashingDuration:        MainnetChainConfig.Dccs.SlashingDuration / 4,
+			LockdownExpiration:      MainnetChainConfig.Dccs.LockdownExpiration / 4,
 		},
 	}
 
@@ -293,7 +302,7 @@ var (
 	//
 	// This configuration is intentionally not using keyed fields to force anyone
 	// adding flags to the config to also have to set these fields.
-	AllDccsProtocolChanges = &ChainConfig{big.NewInt(1337), big.NewInt(0), nil, false, big.NewInt(0), common.Hash{}, big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), nil, nil, nil, nil, &DccsConfig{Period: 0, Epoch: 30000, ThangLongBlock: big.NewInt(0), ThangLongEpoch: 3000, Contract: common.HexToAddress("0x0")}}
+	AllDccsProtocolChanges = &ChainConfig{big.NewInt(1337), big.NewInt(0), nil, false, big.NewInt(0), common.Hash{}, big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), nil, nil, nil, nil, &DccsConfig{Period: 0, Epoch: 30000, ThangLongBlock: big.NewInt(0), ThangLongEpoch: 3000}}
 
 	TestChainConfig = &ChainConfig{big.NewInt(1), big.NewInt(0), nil, false, big.NewInt(0), common.Hash{}, big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), nil, nil, new(EthashConfig), nil, nil}
 	TestRules       = TestChainConfig.Rules(new(big.Int))
@@ -397,8 +406,6 @@ func (c *CliqueConfig) String() string {
 type DccsConfig struct {
 	Period uint64 `json:"period"` // Number of seconds between blocks to enforce
 	Epoch  uint64 `json:"epoch"`  // Epoch length to reset votes and checkpoint
-	// governance smart contract address
-	Contract common.Address `json:"contract,omitempty"`
 	// Governance contract stake params
 	StakeRequire    uint64 `json:"stakeRequire"`    // stake requirement
 	StakeLockHeight uint64 `json:"stakeLockHeight"` // lock time (in blocks) after leaving
@@ -459,10 +466,9 @@ func (c *DccsConfig) Snapshot(number uint64) uint64 {
 
 // String implements the stringer interface, returning the consensus engine details.
 func (c *DccsConfig) String() string {
-	return fmt.Sprintf("dccs {ThangLong: %v Epoch: %v Contract: %v CoLoa: %v LeakDuration: %v ApplicationConfirmation: %v RandomSeedIteration: %v PriceSamplingDuration: %v PriceSamplingInterval: %v AbsorptionDuration: %v AbsorptionExpiration: %v SlashingDuration: %v LockdownExpiration: %v}",
+	return fmt.Sprintf("dccs {ThangLong: %v Epoch: %v CoLoa: %v LeakDuration: %v ApplicationConfirmation: %v RandomSeedIteration: %v PriceSamplingDuration: %v PriceSamplingInterval: %v AbsorptionDuration: %v AbsorptionExpiration: %v SlashingDuration: %v LockdownExpiration: %v}",
 		c.ThangLongBlock,
 		c.ThangLongEpoch,
-		c.Contract.String(),
 		c.CoLoaBlock,
 		c.LeakDuration,
 		c.ApplicationConfirmation,

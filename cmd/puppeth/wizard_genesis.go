@@ -114,9 +114,8 @@ func (w *wizard) makeGenesis() {
 		genesis.GasLimit = 42000000
 		genesis.Difficulty = big.NewInt(1)
 		genesis.Config.Dccs = &params.DccsConfig{
-			Period:   2,
-			Epoch:    30000,
-			Contract: common.HexToAddress("0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"),
+			Period: 2,
+			Epoch:  30000,
 			// Stake params
 			StakeRequire:    100,
 			StakeLockHeight: 24 * 60 * 60 / 2,
@@ -177,12 +176,6 @@ func (w *wizard) makeGenesis() {
 		fmt.Println()
 		fmt.Printf("How many blocks should epoch take after the Thang Long hardfork? (default = %v)\n", genesis.Config.Dccs.ThangLongEpoch)
 		genesis.Config.Dccs.ThangLongEpoch = uint64(w.readDefaultInt(int(genesis.Config.Dccs.ThangLongEpoch)))
-
-		fmt.Println()
-		fmt.Printf("Which nexty governance smart contract address? (default = %v)\n", genesis.Config.Dccs.Contract.Hex())
-		if address := w.readAddress(); address != nil {
-			genesis.Config.Dccs.Contract = *address
-		}
 
 		fmt.Println()
 		fmt.Printf("How many NTF is required to join sealing? (default = %v)\n", genesis.Config.Dccs.StakeRequire)
@@ -267,7 +260,7 @@ func (w *wizard) makeGenesis() {
 		// Read the address of the account to fund
 		if address := w.readAddress(); address != nil {
 			genesis.Alloc[*address] = core.GenesisAccount{
-				Balance: new(big.Int).Lsh(big.NewInt(1), 256-7), // 2^256 / 128 (allow many pre-funds without balance overflows)
+				Balance: common.Big1e27,
 			}
 			continue
 		}
@@ -390,12 +383,6 @@ func (w *wizard) manageGenesis() {
 			fmt.Println()
 			fmt.Printf("Which block should ThangLong come into effect? (default = %v)\n", w.conf.Genesis.Config.Dccs.ThangLongBlock)
 			w.conf.Genesis.Config.Dccs.ThangLongBlock = w.readDefaultBigInt(w.conf.Genesis.Config.Dccs.ThangLongBlock)
-
-			fmt.Println()
-			fmt.Printf("Which nexty governance smart contract address? (default = %v)\n", w.conf.Genesis.Config.Dccs.Contract.Hex())
-			if address := w.readAddress(); address != nil {
-				w.conf.Genesis.Config.Dccs.Contract = *address
-			}
 		}
 
 		out, _ := json.MarshalIndent(w.conf.Genesis.Config, "", "  ")
