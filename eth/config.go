@@ -159,8 +159,8 @@ type Config struct {
 	// Istanbul block override (TODO: remove after the fork)
 	OverrideIstanbul *big.Int
 
-	// Rollback is the block number the chain will be rolled back to.
-	RollbackNumber int64
+	// RollbackNumber is the block number the chain will be rolled back to.
+	RollbackNumber *big.Int `toml:",omitempty"`
 
 	// PriceServiceURL is service enpoint for the consensus.
 	PriceServiceURL string

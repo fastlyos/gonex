@@ -192,19 +192,21 @@ func New(ctx *node.ServiceContext, config *Config) (*Ethereum, error) {
 		return nil, err
 	}
 
-	number := eth.blockchain.CurrentHeader().Number.Uint64()
-	var rollback uint64
-	if config.RollbackNumber > 0 {
-		rollback = uint64(config.RollbackNumber)
-	} else if config.RollbackNumber < 0 {
-		rollback = uint64(number - uint64(-config.RollbackNumber))
-	}
-	if rollback > number {
-		log.Error("Rollback number is older than chain head", "number", number, "rollback", rollback)
-	} else if rollback > 0 {
-		log.Warn("Rolling-back chain as requested", "number", number, "rollback", rollback)
-		eth.blockchain.SetHead(rollback)
-		log.Error("Chain rollback was successful, resuming normal operation")
+	if config.RollbackNumber != nil {
+		number := eth.blockchain.CurrentHeader().Number.Uint64()
+		var rollback uint64
+		if config.RollbackNumber.Sign() >= 0 {
+			rollback = config.RollbackNumber.Uint64()
+		} else {
+			rollback = uint64(number - uint64(-config.RollbackNumber.Int64()))
+		}
+		if rollback > number {
+			log.Error("Rollback number is older than chain head", "number", number, "rollback", rollback)
+		} else {
+			log.Warn("Rolling-back chain as requested", "number", number, "rollback", rollback)
+			eth.blockchain.SetHead(rollback)
+			log.Error("Chain rollback was successful, resuming normal operation")
+		}
 	}
 
 	// Rewind the chain in case of an incompatible config upgrade.
