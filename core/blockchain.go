@@ -1762,7 +1762,8 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 // The method writes all (header-and-body-valid) blocks to disk, then tries to
 // switch over to the new chain if the TD exceeded the current chain.
 func (bc *BlockChain) insertSideChain(block *types.Block, it *insertIterator) (int, []interface{}, []*types.Log, error) {
-	externTd := bc.GetTd(block.ParentHash(), block.NumberU64()-1)
+	externHash := block.ParentHash()
+	externTd := bc.GetTd(externHash, block.NumberU64()-1)
 	current := bc.CurrentBlock()
 	// The first sidechain block error is already verified to be ErrPrunedAncestor.
 	// Since we don't import them here, we expect ErrUnknownAncestor for the remaining
@@ -1798,6 +1799,7 @@ func (bc *BlockChain) insertSideChain(block *types.Block, it *insertIterator) (i
 				return it.index, nil, nil, errors.New("sidechain ghost-state attack")
 			}
 		}
+		externHash = block.Hash()
 		externTd = new(big.Int).Add(externTd, block.Difficulty())
 
 		if !bc.HasBlock(block.Hash(), block.NumberU64()) {
@@ -1818,7 +1820,7 @@ func (bc *BlockChain) insertSideChain(block *types.Block, it *insertIterator) (i
 	// If the externTd was larger than our local TD, we now need to reimport the previous
 	// blocks to regenerate the required state
 	localTd := bc.GetTd(current.Hash(), current.NumberU64())
-	if ChainCompare(localTd, externTd, current.Hash(), block.Hash()) > 0 {
+	if ChainCompare(localTd, externTd, current.Hash(), externHash) > 0 {
 		log.Info("Sidechain written to disk", "start", it.first().NumberU64(), "end", it.previous().Number, "sidetd", externTd, "localtd", localTd)
 		return it.index, nil, nil, err
 	}
