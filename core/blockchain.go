@@ -181,7 +181,7 @@ type BlockChain struct {
 // NewBlockChain returns a fully initialised block chain using information
 // available in the database. It initialises the default Ethereum Validator and
 // Processor.
-func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *params.ChainConfig, engine consensus.Engine, vmConfig vm.Config, shouldPreserve func(block *types.Block) bool) (*BlockChain, error) {
+func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *params.ChainConfig, engine consensus.Engine, vmConfig vm.Config, shouldPreserve func(block *types.Block) bool, rollbackNumber *big.Int) (*BlockChain, error) {
 	if cacheConfig == nil {
 		cacheConfig = &CacheConfig{
 			TrieCleanLimit: 256,
@@ -235,6 +235,27 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 	if err := bc.loadLastState(); err != nil {
 		return nil, err
 	}
+
+	if rollbackNumber != nil {
+		number := bc.CurrentHeader().Number.Uint64()
+		var rollback uint64
+		if rollbackNumber.Sign() >= 0 {
+			rollback = rollbackNumber.Uint64()
+		} else {
+			r := uint64(-rollbackNumber.Int64())
+			if number > r {
+				rollback = number - r
+			}
+		}
+		if rollback > number {
+			log.Error("Rollback number is older than chain head", "number", number, "rollback", rollback)
+		} else {
+			log.Warn("Rolling-back chain as requested", "number", number, "rollback", rollback)
+			bc.SetHead(rollback)
+			log.Error("Chain rollback was successful, resuming normal operation")
+		}
+	}
+
 	// The first thing the node will do is reconstruct the verification data for
 	// the head block (ethash cache or clique voting snapshot). Might as well do
 	// it in advance.
@@ -390,15 +411,21 @@ func (bc *BlockChain) SetHead(head uint64) error {
 	updateFn := func(db ethdb.KeyValueWriter, header *types.Header) {
 		// Rewind the block chain, ensuring we don't end up with a stateless head block
 		if currentBlock := bc.CurrentBlock(); currentBlock != nil && header.Number.Uint64() < currentBlock.NumberU64() {
-			newHeadBlock := bc.GetBlock(header.Hash(), header.Number.Uint64())
-			if newHeadBlock == nil {
-				newHeadBlock = bc.genesisBlock
-			} else {
-				if _, err := state.New(newHeadBlock.Root(), bc.stateCache); err != nil {
-					// Rewound state missing, rolled back to before pivot, reset to genesis
-					newHeadBlock = bc.genesisBlock
+			newHeadBlock := func() *types.Block {
+				number := header.Number.Uint64()
+				// rolling back until a block with state found
+				for n := number; n > 0; n-- {
+					b := bc.GetBlockByNumber(n)
+					if b == nil {
+						continue
+					}
+					if _, err := state.New(b.Root(), bc.stateCache); err != nil {
+						continue
+					}
+					return b
 				}
-			}
+				return bc.genesisBlock
+			}()
 			rawdb.WriteHeadBlockHash(db, newHeadBlock.Hash())
 			bc.currentBlock.Store(newHeadBlock)
 			headBlockGauge.Update(int64(newHeadBlock.NumberU64()))
@@ -406,11 +433,16 @@ func (bc *BlockChain) SetHead(head uint64) error {
 
 		// Rewind the fast block in a simpleton way to the target head
 		if currentFastBlock := bc.CurrentFastBlock(); currentFastBlock != nil && header.Number.Uint64() < currentFastBlock.NumberU64() {
-			newHeadFastBlock := bc.GetBlock(header.Hash(), header.Number.Uint64())
-			// If either blocks reached nil, reset to the genesis state
-			if newHeadFastBlock == nil {
-				newHeadFastBlock = bc.genesisBlock
-			}
+			newHeadFastBlock := func() *types.Block {
+				// rolling back until a block is found
+				for n := header.Number.Uint64(); n > 0; n-- {
+					if b := bc.GetBlockByNumber(n); b != nil {
+						return b
+					}
+				}
+				return bc.genesisBlock
+			}()
+
 			rawdb.WriteHeadFastBlockHash(db, newHeadFastBlock.Hash())
 			bc.currentFastBlock.Store(newHeadFastBlock)
 			headFastBlockGauge.Update(int64(newHeadFastBlock.NumberU64()))
@@ -1730,7 +1762,8 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 // The method writes all (header-and-body-valid) blocks to disk, then tries to
 // switch over to the new chain if the TD exceeded the current chain.
 func (bc *BlockChain) insertSideChain(block *types.Block, it *insertIterator) (int, []interface{}, []*types.Log, error) {
-	externTd := bc.GetTd(block.ParentHash(), block.NumberU64()-1)
+	externHash := block.ParentHash()
+	externTd := bc.GetTd(externHash, block.NumberU64()-1)
 	current := bc.CurrentBlock()
 	// The first sidechain block error is already verified to be ErrPrunedAncestor.
 	// Since we don't import them here, we expect ErrUnknownAncestor for the remaining
@@ -1766,6 +1799,7 @@ func (bc *BlockChain) insertSideChain(block *types.Block, it *insertIterator) (i
 				return it.index, nil, nil, errors.New("sidechain ghost-state attack")
 			}
 		}
+		externHash = block.Hash()
 		externTd = new(big.Int).Add(externTd, block.Difficulty())
 
 		if !bc.HasBlock(block.Hash(), block.NumberU64()) {
@@ -1786,7 +1820,7 @@ func (bc *BlockChain) insertSideChain(block *types.Block, it *insertIterator) (i
 	// If the externTd was larger than our local TD, we now need to reimport the previous
 	// blocks to regenerate the required state
 	localTd := bc.GetTd(current.Hash(), current.NumberU64())
-	if ChainCompare(localTd, externTd, current.Hash(), block.Hash()) > 0 {
+	if ChainCompare(localTd, externTd, current.Hash(), externHash) > 0 {
 		log.Info("Sidechain written to disk", "start", it.first().NumberU64(), "end", it.previous().Number, "sidetd", externTd, "localtd", localTd)
 		return it.index, nil, nil, err
 	}
