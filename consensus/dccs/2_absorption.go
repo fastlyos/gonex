@@ -86,7 +86,7 @@ func (c *Context) OnBlockInitialized(header *types.Header, state *state.StateDB,
 	snap := state.Snapshot()
 
 	state.Prepare(tx.Hash(), emptyHash, 0)
-	receipt, _, err := core.ApplyTransaction(c.chain.Config(), c.chain, &header.Coinbase, &gasPool, state, header, tx, &gasUsed,
+	receipt, err := core.ApplyTransaction(c.chain.Config(), c.chain, &header.Coinbase, &gasPool, state, header, tx, &gasUsed,
 		vm.Config{
 			IgnoreNonce: true,
 			Signer: types.ConsensusSigner{
