@@ -15,8 +15,8 @@ contract Absorbable is Orderbook {
 
     event Absorption(int256 amount, uint256 supply, bool emptive);
     event Stop();
-    event Slash(address maker, uint256 amount);
-    event Unlock(address maker);
+    event Slash(address indexed maker, uint256 amount);
+    event Unlock(address indexed maker);
 
     IToken VolatileToken;
     IToken StablizeToken; // spelling intented
@@ -205,13 +205,9 @@ contract Absorbable is Orderbook {
     /**
      * @dev slash the initiator whenever the price is moving in
      * opposition direction with the initiator's direction,
-     * the initiator's deposited balance will be minus by _amount
+     * the initiator's deposited balance will be minus by slashed
      *
-     * _amount is the NTY value need to be burn, calculate in the consensus level
-     * _amount = |d/D|/SlashingDuration
-     * d = MedianPriceDeviation
-     * D = X/S, X is the amount of NewSD will be absorbed, S is the current NewSD total supply
-     * consensus need to update the balance to burn amount return from calling slash function
+     * slashed = MIN(PeA.Stake, MAX(1, -Diviation/PeA.Amount / PeA.SlashingDuration))
      *
      * @return true if the lockdown is violated and get slashed
      */

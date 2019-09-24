@@ -1,7 +1,5 @@
 pragma solidity ^0.5.2;
 
-import "openzeppelin-solidity/contracts/math/Math.sol";
-import "openzeppelin-solidity/contracts/math/SafeMath.sol";
 import "./lib/map.sol";
 import "./lib/dex.sol";
 import "./lib/absn.sol";
@@ -10,7 +8,6 @@ import "./lib/absn.sol";
  * Contract code for Volatile/Stablize exchange
  */
 contract Orderbook {
-    using SafeMath for uint;
     using dex for dex.Order;
     using dex for dex.Book;
 
@@ -39,12 +36,14 @@ contract Orderbook {
     )
         internal
     {
-        // TODO: get order type from ripem160(haveToken)[:16] + ripem160(wantToken)[:16]
+        (bytes32 id, dex.Order memory order) = dex.createOrder(maker, index, haveAmount, wantAmount);
         dex.Book storage book = bookHave(msg.sender);
-
-        bytes32 newID = book.createOrder(maker, index, haveAmount, wantAmount);
-        book.place(newID, assistingID);
-        book.fill(newID, bookWant(msg.sender));
+        book.fill(order, bookWant(msg.sender));
+        if (order.isEmpty()) {
+            book.refund(order);
+        } else {
+            book.place(id, order, assistingID);
+        }
     }
 
     // iterator
@@ -103,11 +102,11 @@ contract Orderbook {
         public
         view
         returns (
-            address,
-            uint,
-            uint,
-            bytes32,
-            bytes32
+            address maker,
+            uint have,
+            uint want,
+            bytes32 prevID,
+            bytes32 nextID
         )
     {
         dex.Book storage book = books[_orderType];

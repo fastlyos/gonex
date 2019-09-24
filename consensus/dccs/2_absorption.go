@@ -17,6 +17,7 @@
 package dccs
 
 import (
+	"fmt"
 	"math"
 	"math/big"
 
@@ -146,7 +147,8 @@ func AbsorbedStat(chain consensus.ChainReader, number uint64) string {
 	if supply == nil {
 		return "No New Supply"
 	}
-	return supply.Sub(supply, oldSupply).String()
+	absorbed := supply.Sub(supply, oldSupply)
+	return fmt.Sprint(float64(absorbed.Int64()) / 1000000)
 }
 
 // RemainToAbsorbStat returns ethstats data for stablecoin supply remain to absorb
@@ -176,7 +178,7 @@ func RemainToAbsorbStat(chain consensus.ChainReader, number uint64) string {
 	if !hasAbsorption || remain == nil {
 		return "0"
 	}
-	return remain.String()
+	return fmt.Sprint(float64(remain.Int64()) / 1000000)
 }
 
 // StableSupplyStat returns ethstats data for stablecoin supply
@@ -199,7 +201,7 @@ func StableSupplyStat(chain consensus.ChainReader, number uint64) string {
 	if supply == nil {
 		return "No Supply"
 	}
-	return supply.String()
+	return fmt.Sprint(float64(supply.Uint64()) / 1000000)
 }
 
 // GetStableTokenSupply returns the current supply of the stable token in the stateDB

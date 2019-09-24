@@ -14,16 +14,16 @@ contract Preemptivable is Absorbable {
     using absn for absn.Proposal;
     using absn for absn.Preemptive;
 
-    event Revoke(address maker);
+    event Revoke(address indexed maker);
     event Propose(
-        address maker,
+        address indexed maker,
         int256 amount,
         uint256 stake,
         uint256 lockdownExpiration,
         uint256 slashingDuration
     );
     event Preemptive(
-        address maker,
+        address indexed maker,
         uint256 stake,
         uint256 lockdownExpiration,
         uint256 unlockNumber
@@ -139,13 +139,13 @@ contract Preemptivable is Absorbable {
     )
         internal
     {
-        require(stake > globalSuccessStake - globalSuccessStake / PARAM_TOLERANCE, "stake too low");
+        require(stake >= globalSuccessStake - globalSuccessStake / PARAM_TOLERANCE, "stake too low");
 
         absn.Proposal memory proposal;
 
         if (slashingDuration > 0) {
             require(
-                slashingDuration >
+                slashingDuration <=
                 globalSlashingDuration + globalSlashingDuration / PARAM_TOLERANCE,
                 "slashing duration param too long");
             proposal.slashingDuration = slashingDuration;
@@ -155,7 +155,7 @@ contract Preemptivable is Absorbable {
 
         if (lockdownExpiration > 0) {
             require(
-                lockdownExpiration <
+                lockdownExpiration >=
                 globalLockdownExpiration - globalLockdownExpiration / PARAM_TOLERANCE,
                 "lockdown duration param too short");
             proposal.lockdownExpiration = lockdownExpiration;
@@ -248,7 +248,7 @@ contract Preemptivable is Absorbable {
         if (voteCount <= 0) {
             return 0;
         }
-        return int(proposal.stake) * countVote(proposal);
+        return util.mulCap(voteCount, int(proposal.stake));
     }
 
     // expensive calculation, only consensus can affort this
@@ -268,7 +268,7 @@ contract Preemptivable is Absorbable {
 
     // expensive calculation, only consensus can affort this
     function winningProposal() internal view returns(address, uint) {
-        int globalRequirement = int(globalSuccessRank - (globalSuccessRank / PARAM_TOLERANCE));
+        int globalRequirement = int(globalSuccessRank - globalSuccessRank / PARAM_TOLERANCE);
         int bestRank = 0;
         address bestMaker = ZERO_ADDRESS;
         for (uint i = 0; i < proposals.count(); ++i) {

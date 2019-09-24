@@ -1,6 +1,5 @@
 pragma solidity ^0.5.2;
 
-import "openzeppelin-solidity/contracts/math/SafeMath.sol";
 import "../interfaces/IToken.sol";
 
 /**
@@ -10,8 +9,6 @@ import "../interfaces/IToken.sol";
  * volatile nature of the token must put in the contract level.
  */
 library dex {
-    using SafeMath for uint;
-
     bytes32 constant ZERO_ID = bytes32(0x0);
     bytes32 constant LAST_ID = bytes32(0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF);
     address constant ZERO_ADDRESS = address(0x0);
@@ -47,7 +44,7 @@ library dex {
         return order.maker != ZERO_ADDRESS;
     }
 
-    function isEmpty(Order storage order) internal view returns(bool)
+    function isEmpty(Order memory order) internal pure returns(bool)
     {
         return order.haveAmount == 0 || order.wantAmount == 0;
     }
@@ -122,24 +119,24 @@ library dex {
     }
 
     function createOrder(
-        Book storage book,
         address maker,
         bytes32 index,
         uint haveAmount,
         uint wantAmount
     )
         internal
-        returns (bytes32)
+        pure
+        returns (bytes32 id, Order memory order)
     {
         // TODO move require check to API
         require(haveAmount > 0 && wantAmount > 0, "zero input");
         require(haveAmount < INPUTS_MAX && wantAmount < INPUTS_MAX, "input over limit");
-        bytes32 id = _calcID(maker, index);
-        Order storage order = book.orders[id];
-        require(!order.exists(), "order index exists");
+        id = _calcID(maker, index);
+        // Order storage order = book.orders[id];
+        // require(!order.exists(), "order index exists");
         // create new order
-        book.orders[id] = Order(maker, haveAmount, wantAmount, 0, 0);
-        return id;
+        order = Order(maker, haveAmount, wantAmount, 0, 0);
+        return (id, order);
     }
 
     // insert [id] as [prev].next
@@ -209,16 +206,16 @@ library dex {
     // place the new order into its correct position
     function place(
         Book storage book,
-        bytes32 newID,
+        bytes32 id,
+        Order memory order,
         bytes32 assistingID
     )
         internal
- 	    returns (bytes32)
     {
-        Order storage newOrder = book.orders[newID];
-        bytes32 id = book.find(newOrder, assistingID);
-        book.insertAfter(newID, id);
-        return id;
+        require(!book.orders[id].exists(), "order index exists");
+        book.orders[id] = order;
+        bytes32 prev = book.m_find(order, assistingID);
+        book.insertAfter(id, prev);
     }
 
     // NOTE: this function does not payout nor refund
@@ -240,14 +237,41 @@ library dex {
 
     function payout(
         Book storage book,
+        Order memory order
+    )
+        internal
+    {
+        if (order.wantAmount > 0) {
+            book.wantToken.transfer(order.maker, order.wantAmount);
+        }
+        order.wantAmount = 0;
+        order.haveAmount = 0;
+    }
+
+    function payout(
+        Book storage book,
         bytes32 id
     )
         internal
     {
-        if (book.orders[id].wantAmount > 0) {
-            book.wantToken.transfer(book.orders[id].maker, book.orders[id].wantAmount);
+        Order memory order = book.orders[id];
+        if (order.wantAmount > 0) {
+            book.wantToken.transfer(order.maker, order.wantAmount);
         }
         book._remove(id);
+    }
+
+    function refund(
+        Book storage book,
+        Order memory order
+    )
+        internal
+    {
+        if (order.haveAmount > 0) {
+            book.haveToken.transfer(order.maker, order.haveAmount);
+        }
+        order.haveAmount = 0;
+        order.wantAmount = 0;
     }
 
     function refund(
@@ -256,10 +280,26 @@ library dex {
     )
         internal
     {
-        if (book.orders[id].haveAmount > 0) {
-            book.haveToken.transfer(book.orders[id].maker, book.orders[id].haveAmount);
+        Order memory order = book.orders[id];
+        if (order.haveAmount > 0) {
+            book.haveToken.transfer(order.maker, order.haveAmount);
         }
         book._remove(id);
+    }
+
+    function payoutPartial(
+        Book storage book,
+        Order memory order,
+        uint fillableHave,
+        uint fillableWant
+    )
+        internal
+    {
+        require (fillableHave <= order.haveAmount, "PP: fillable > have");
+        require (fillableWant <= order.wantAmount, "PP: fillable > want");
+        order.haveAmount -= fillableHave; // safe
+        order.wantAmount -= fillableWant; // safe
+        book.wantToken.transfer(order.maker, fillableWant);
     }
 
     function payoutPartial(
@@ -271,33 +311,23 @@ library dex {
         internal
     {
         Order storage order = book.orders[id];
-        require(order.exists(), "order not exist");
-        require(fillableHave <= order.haveAmount, "fill more than have amount");
-        order.haveAmount = order.haveAmount.sub(fillableHave);
-        if (fillableWant < order.wantAmount) {
-            // no need for SafeMath here
-            order.wantAmount -= fillableWant;
-        } else {
-            // possibly profit from price diffirent
-            order.wantAmount = 0;
-        }
+        require (fillableHave <= order.haveAmount, "PP: fillable > have");
+        require (fillableWant <= order.wantAmount, "PP: fillable > want");
+        order.haveAmount -= fillableHave; // safe
+        order.wantAmount -= fillableWant; // safe
         book.wantToken.transfer(order.maker, fillableWant);
-        // emit PartialFill(id, order.maker, fillableHave, fillableWant);
         if (order.isEmpty()) {
-            // emit RefundRemain(id, order.maker, order.haveAmount);
             book.refund(id);
         }
     }
 
     function fill(
         Book storage orderBook,
-        bytes32 orderID,
+        Order memory order,
         Book storage redroBook
     )
         internal
-        returns (bytes32 nextID)
     {
-        Order storage order = orderBook.orders[orderID];
         bytes32 redroID = redroBook.topID();
 
         while (redroID != LAST_ID) {
@@ -308,21 +338,21 @@ library dex {
             if (!order.fillableBy(redro)) {
                 break;
             }
-            if (order.haveAmount < redro.wantAmount) {
-                uint fillable = order.haveAmount * redro.haveAmount / redro.wantAmount;
-                require(fillable <= redro.haveAmount, "fillable > have");
-                // partially payout the redro and stop
-                redroBook.payoutPartial(redroID, fillable, order.haveAmount);
-                orderBook.payoutPartial(orderID, order.haveAmount, fillable);
+            if (order.wantAmount < redro.haveAmount) {
+                uint fillable = order.wantAmount * redro.wantAmount / redro.haveAmount;
+                // partially payout the redro
+                redroBook.payoutPartial(redroID, order.wantAmount, fillable);
+                // fully spent the order and stop
+                orderBook.payoutPartial(order, fillable, order.wantAmount);
                 break;
             }
-            // fully payout the redro
-            orderBook.payoutPartial(orderID, redro.wantAmount, redro.haveAmount);
-            bytes32 next = redro.next;
+            // partially payout order
+            orderBook.payoutPartial(order, redro.wantAmount, redro.haveAmount);
+            // fully payout redro
             redroBook.payout(redroID);
-            redroID = next;
+            // next order
+            redroID = redroBook.topID();
         }
-        return redroID;
     }
 
     // absorb and duplicate the effect to initiator
@@ -349,7 +379,7 @@ library dex {
             totalBMT += useHaveAmount ? wantAMT : haveAMT;
             // emit SideFill(initiator, haveAMT, wantAMT);
         }
-        // not enough alowance for side absorption
+        // not enough allowance for side absorption
     }
 
     function absorb(
@@ -362,10 +392,11 @@ library dex {
     {
         bytes32 id = book.topID();
         while(id != LAST_ID && totalAMT < target) {
-            dex.Order storage order = book.orders[id];
+            Order storage order = book.orders[id];
             uint amt = useHaveAmount ? order.haveAmount : order.wantAmount;
             uint bmt = useHaveAmount ? order.wantAmount : order.haveAmount;
-            if (totalAMT.add(amt) <= target) {
+            uint fillableAMT = target - totalAMT; // safe
+            if (amt <= fillableAMT) {
                 // fill the order
                 book.haveToken.dexBurn(order.haveAmount);
                 book.wantToken.dexMint(order.wantAmount);
@@ -375,20 +406,24 @@ library dex {
                 id = next;
             } else {
                 // partial order fill
-                uint fillableAMT = target.sub(totalAMT);
                 bmt = bmt * fillableAMT / amt;
                 amt = fillableAMT;
+                if (totalBMT + bmt < totalBMT) {
+                    // overflow: stop the absorption prematurely
+                    return (totalBMT, totalAMT);
+                }
                 uint fillableHave = useHaveAmount ? amt : bmt;
                 uint fillableWant = useHaveAmount ? bmt : amt;
                 // fill the partial order
                 book.haveToken.dexBurn(fillableHave);
                 book.wantToken.dexMint(fillableWant);
+                // emit PartialFill(id, order.maker);
                 book.payoutPartial(id, fillableHave, fillableWant);
                 // extra step to make sure the loop will stop after this
                 id = LAST_ID;
             }
-            totalAMT = totalAMT.add(amt);
-            totalBMT = totalBMT.add(bmt);
+            totalBMT += bmt; // safe
+            totalAMT += amt; // safe
         }
         // not enough order, return all we have
         return (totalBMT, totalAMT);
@@ -396,34 +431,34 @@ library dex {
 
     // amountToAbsorb calculates the amount will be absorbed by absorb()
     // always be updated with absorb() logic
-    function amountToAbsorb(
-        Book storage book,
-        bool useHaveAmount,
-        uint target
-    )
-        internal
-        view
-        returns(uint totalBMT, uint totalAMT)
-    {
-        bytes32 id = book.topID();
-        while(id != LAST_ID && totalAMT < target) {
-            dex.Order storage order = book.orders[id];
-            uint amt = useHaveAmount ? order.haveAmount : order.wantAmount;
-            uint bmt = useHaveAmount ? order.wantAmount : order.haveAmount;
-            if (totalAMT.add(amt) <= target) {
-                id = order.next;
-            } else {
-                // partial order fill
-                uint fillableAMT = target.sub(totalAMT);
-                bmt = bmt * fillableAMT / amt;
-                amt = fillableAMT;
-                // extra step to make sure the loop will stop after this
-                id = LAST_ID;
-            }
-            totalAMT = totalAMT.add(amt);
-            totalBMT = totalBMT.add(bmt);
-        }
-        // not enough order, return all we have
-        return (totalBMT, totalAMT);
-    }
+    // function amountToAbsorb(
+    //     Book storage book,
+    //     bool useHaveAmount,
+    //     uint target
+    // )
+    //     internal
+    //     view
+    //     returns(uint totalBMT, uint totalAMT)
+    // {
+    //     bytes32 id = book.topID();
+    //     while(id != LAST_ID && totalAMT < target) {
+    //         dex.Order storage order = book.orders[id];
+    //         uint amt = useHaveAmount ? order.haveAmount : order.wantAmount;
+    //         uint bmt = useHaveAmount ? order.wantAmount : order.haveAmount;
+    //         if (totalAMT.add(amt) <= target) {
+    //             id = order.next;
+    //         } else {
+    //             // partial order fill
+    //             uint fillableAMT = target.sub(totalAMT);
+    //             bmt = bmt * fillableAMT / amt;
+    //             amt = fillableAMT;
+    //             // extra step to make sure the loop will stop after this
+    //             id = LAST_ID;
+    //         }
+    //         totalAMT = totalAMT.add(amt);
+    //         totalBMT = totalBMT.add(bmt);
+    //     }
+    //     // not enough order, return all we have
+    //     return (totalBMT, totalAMT);
+    // }
 }
