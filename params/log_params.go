@@ -41,11 +41,8 @@ const (
 )
 
 var (
-	// TopicRevert is Keccak("REVERT")
-	TopicRevert = common.HexToHash("e13872d662304a4be4efe6d4425b00781f90609ddf2ef6e5b5e5c8bc7f5ed47f")
-
-	// TopicError is Keccak("ERROR")
-	TopicError = common.HexToHash("6368faa35d5ea15ae80b929d8626383bb91c2157389a6ddb6239282e6aa9005d")
+	TopicError  = common.BytesToHash([]byte{0x00})
+	TopicRevert = common.BytesToHash([]byte{0x01})
 )
 
 var (
