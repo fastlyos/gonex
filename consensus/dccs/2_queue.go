@@ -80,8 +80,8 @@ func (q *SealingQueue) commonRatio(r *SealingQueue) (*big.Rat, bool) {
 		}
 	}
 	ratio := big.NewRat(int64(common), int64(len(larger)))
-	// common should not be less that super majority of both queues
-	broken := common*3 < qLen*2 || common*3 < rLen*2
+	// common must be more than super majority of both queues
+	broken := common*3 <= qLen*2 || common*3 <= rLen*2
 	return ratio, broken
 }
 
