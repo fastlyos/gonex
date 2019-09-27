@@ -61,7 +61,6 @@ var DefaultConfig = Config{
 		Blocks:     20,
 		Percentile: 60,
 	},
-	PriceServiceURL: "http://localhost:3000/price/NUSD_USD",
 }
 
 func init() {

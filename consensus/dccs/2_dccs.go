@@ -511,7 +511,7 @@ func (c *Context) prepare2(header *types.Header) error {
 	header.Difficulty = new(big.Int).SetUint64(difficulty)
 
 	var price *Price
-	if c.engine.config.IsPriceBlock(number) {
+	if c.engine.config.IsPriceBlock(number) && len(c.engine.priceURL) > 0 {
 		price = c.engine.PriceEngine().CurrentPrice()
 		if price == nil {
 			log.Warn("No price to record in block", "number", number)
