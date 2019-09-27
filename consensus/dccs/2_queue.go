@@ -210,7 +210,7 @@ func (q *SealingQueue) difficulty(address common.Address, prioritized bool,
 	return diff
 }
 
-// recents len is MIN(lastActiveLen,activeLen)/2
+// recents len is MIN(lastActiveLen,activeLen)*2/3
 func (c *Context) getSealingQueue(parentHash common.Hash) (*SealingQueue, error) {
 	if q, ok := c.engine.sealingQueueCache.Get(parentHash); ok {
 		// in-memory SealingQueue found
@@ -306,7 +306,7 @@ func (c *Context) getSealingQueue(parentHash common.Hash) (*SealingQueue, error)
 			maxDiff = diff
 		}
 		// somewhat probabilistically optimized, fairly safe nonetheless
-		if i < minBlockToScan || len(recents) < int(maxDiff)/2 {
+		if i < minBlockToScan || len(recents) < int(maxDiff*2/3) {
 			addRecent(sealer)
 		}
 
@@ -329,10 +329,8 @@ func (c *Context) getSealingQueue(parentHash common.Hash) (*SealingQueue, error)
 	}
 
 	// truncate the extra recents
-	if len(queue.active)/2 < len(recents) {
-		for i := len(queue.active) / 2; i < len(recents); i++ {
-			delete(queue.recent, recents[i])
-		}
+	for i := len(queue.active) * 2 / 3; i < len(recents); i++ {
+		delete(queue.recent, recents[i])
 	}
 
 	// Store found snapshot into mem-cache
