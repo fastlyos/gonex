@@ -59,6 +59,7 @@ var (
 	errInvalidExtendedData       = errors.New("Extended data does not matches")
 	errInvalidRandomData         = errors.New("Invalid random data in extra data")
 	errInvalidRandomDataSize     = errors.New("Invalid random data size from relayer")
+	errInvalidPrioritiezedDiff   = errors.New("Invalid prioritized block difficulty")
 
 	errInvalidPriceData  = errors.New("price block contains invalid price value")
 	errUnexpectPriceData = errors.New("non-price block contains price value")
@@ -269,8 +270,11 @@ func (c *Context) verifySeal2() error {
 		return errRecentlySigned
 	}
 
+	// block with random seed or the CoLoa hardfork block
+	prioritized := header.Nonce == types.BlockNonce{}
+
 	// Ensure that the difficulty corresponds to the turn-ness of the signer
-	signerDifficulty := queue.difficulty(signer, c.getHeaderByHash, c.engine.signatures)
+	signerDifficulty := queue.difficulty(signer, prioritized, c.getHeaderByHash, c.engine.signatures)
 	if header.Difficulty.Uint64() != signerDifficulty {
 		return errInvalidDifficulty
 	}
@@ -465,10 +469,6 @@ func (c *Context) prepare2(header *types.Header) error {
 		return err
 	}
 
-	// Set the correct difficulty
-	difficulty := queue.difficulty(c.engine.signer, c.chain.GetHeaderByHash, c.engine.signatures)
-	header.Difficulty = new(big.Int).SetUint64(difficulty)
-
 	// Ensure the timestamp has the correct delay
 	header.Time = parent.Time + c.engine.config.Period
 	if header.Time < uint64(time.Now().Unix()) {
@@ -502,6 +502,13 @@ func (c *Context) prepare2(header *types.Header) error {
 		// record the distant from the last sealer application block
 		header.Nonce = c.getBlockNonce(parent)
 	}
+
+	// block with random seed or the CoLoa hardfork block
+	prioritized := header.Nonce == types.BlockNonce{}
+
+	// Set the correct difficulty
+	difficulty := queue.difficulty(c.engine.signer, prioritized, c.chain.GetHeaderByHash, c.engine.signatures)
+	header.Difficulty = new(big.Int).SetUint64(difficulty)
 
 	var price *Price
 	if c.engine.config.IsPriceBlock(number) {
