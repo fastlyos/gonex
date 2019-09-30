@@ -162,8 +162,8 @@ func (c *Context) verifyCascadingFields2() error {
 	}
 
 	// Ensure that the block's timestamp isn't too close to it's parent
-	parent := c.getHeaderByHash(header.ParentHash)
-	if parent == nil || parent.Number.Uint64() != number-1 || parent.Hash() != header.ParentHash {
+	parent := c.getHeader(header.ParentHash, number-1)
+	if parent == nil {
 		return consensus.ErrUnknownAncestor
 	}
 	if parent.Time+c.engine.config.Period > header.Time {
