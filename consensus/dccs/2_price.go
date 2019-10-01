@@ -105,6 +105,10 @@ func (a ByPrice) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
 // CalcMedianPrice calculates the median price of a price block and cache it.
 // TODO: optimize rolling median calculation
 func (c *Context) CalcMedianPrice(number uint64) (*Price, error) {
+	if len(c.engine.priceURL) == 0 {
+		// price server URL not provided
+		return nil, nil
+	}
 	if !c.engine.config.IsPriceBlock(number) {
 		// not a price block
 		return nil, nil
@@ -156,6 +160,10 @@ func medianPrice(prices []*Price, minValues int) (*Price, error) {
 
 // GetBlockPrice returns the price encoded in a block header extra data
 func (c *Context) GetBlockPrice(number uint64) *Price {
+	if len(c.engine.priceURL) == 0 {
+		// price server URL not provided
+		return nil
+	}
 	if !c.engine.config.IsPriceBlock(number) {
 		// not a price block
 		return nil
