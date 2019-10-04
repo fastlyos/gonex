@@ -234,6 +234,11 @@ func (st *StateTransition) TransitionDb() (ret []byte, usedGas uint64, failed bo
 		// sufficient balance to make the transfer happen. The first
 		// balance transfer may never fail.
 		if vmerr == vm.ErrInsufficientBalance {
+			if msg.To() == nil {
+				evm.LogFailure(common.Address{}, params.TopicError, params.ErrorLogInsufficientBalance)
+			} else {
+				evm.LogFailure(*msg.To(), params.TopicError, params.ErrorLogInsufficientBalance)
+			}
 			return nil, 0, false, vmerr
 		}
 	}
