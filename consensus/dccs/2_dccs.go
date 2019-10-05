@@ -59,7 +59,6 @@ var (
 	errInvalidExtendedData       = errors.New("Extended data does not matches")
 	errInvalidRandomData         = errors.New("Invalid random data in extra data")
 	errInvalidRandomDataSize     = errors.New("Invalid random data size from relayer")
-	errInvalidPrioritiezedDiff   = errors.New("Invalid prioritized block difficulty")
 
 	errInvalidPriceData  = errors.New("price block contains invalid price value")
 	errUnexpectPriceData = errors.New("non-price block contains price value")
