@@ -18,6 +18,7 @@
 package vdf
 
 import (
+	"errors"
 	"fmt"
 	"os/exec"
 	"runtime"
@@ -32,62 +33,46 @@ import (
 	"github.com/harmony-one/vdf/src/vdf_go"
 )
 
-var (
-	engine     *Engine
-	engineOnce sync.Once
-)
+const vdfGenInternal = "internal"
+const vdfGenDisable = "disable"
 
-// Engine defines the structure of the engine
-type Engine struct {
+type generator struct {
 	cli string
 }
 
-// Instance returns the singleton instance of the VDF Engine
-func Instance() *Engine {
-	engineOnce.Do(func() {
-		engine = newEngine("vdf-cli")
-	})
-	return engine
-}
+var goGenerator = generator{}
+var generators sync.Map
 
-// InitCLI inits the instance with the specific cli name.
-// Must be called before any call to Instance() to override the
-// default cli name "vdf-cli".
-// Useful unit test.
-func InitCLI(cliName string) {
-	engineOnce.Do(func() {
-		engine = newEngine(cliName)
-	})
-}
-
-func newEngine(cliName string) *Engine {
+func Generator(cliName string) *generator {
+	if len(cliName) == 0 || cliName == vdfGenDisable {
+		log.Warn("VDF generator: disabled")
+		return nil
+	}
+	if cliName == vdfGenInternal {
+		log.Warn("VDF generator: internal")
+		return &goGenerator
+	}
+	if val, ok := generators.Load(cliName); ok {
+		return val.(*generator)
+	}
 	cli, err := exec.LookPath(cliName)
 	if err != nil {
-		log.Warn("vdf.newEngine", cliName, "not found")
+		log.Error("VDF generator: disabled", cliName, "not found")
+		return nil
 	}
-	return &Engine{cli}
-}
-
-// IsCLI returns whether cli is used for this engine
-func (e *Engine) IsCLI() bool {
-	return len(e.cli) > 0
-}
-
-// Verify verifies the generated output against the seed
-func (e *Engine) Verify(seed, output []byte, iteration uint64, bitSize uint64) (valid bool) {
-	defer func() {
-		if x := recover(); x != nil {
-			log.Error("vdf.Verify: verification process panic", "reason", x)
-			valid = false
-		}
-	}()
-	return vdf_go.VerifyVDF(seed, output, int(iteration), int(bitSize))
+	gen := generator{cli}
+	ret, _ := generators.LoadOrStore(cliName, &gen)
+	log.Info("VDF generator", "cli", cli)
+	return ret.(*generator)
 }
 
 // Generate generates the vdf output = (y, proof)
-func (e *Engine) Generate(seed []byte, iteration uint64, bitSize uint64, stop <-chan struct{}) (output []byte, err error) {
-	if len(e.cli) > 0 {
-		return e.generateCLI(seed, iteration, bitSize, stop)
+func (g *generator) Generate(seed []byte, iteration uint64, bitSize uint64, stop <-chan struct{}) (output []byte, err error) {
+	if g == nil {
+		return nil, errors.New("VDF generator disabled")
+	}
+	if len(g.cli) > 0 {
+		return g.generateCLI(seed, iteration, bitSize, stop)
 	}
 	defer func() {
 		if x := recover(); x != nil {
@@ -130,13 +115,13 @@ func (e *Engine) Generate(seed []byte, iteration uint64, bitSize uint64, stop <-
 	return append(y, proof...), nil
 }
 
-func (e *Engine) generateCLI(seed []byte, iteration uint64, bitSize uint64, stop <-chan struct{}) (output []byte, err error) {
-	cmd := exec.Command(e.cli,
+func (g *generator) generateCLI(seed []byte, iteration uint64, bitSize uint64, stop <-chan struct{}) (output []byte, err error) {
+	cmd := exec.Command(g.cli,
 		"-l"+strconv.Itoa(int(bitSize)),
 		common.Bytes2Hex(seed),
 		strconv.Itoa(int(iteration)))
 
-	log.Trace(e.cli + " -l" + strconv.Itoa(int(bitSize)) + " " + common.Bytes2Hex(seed) + " " + strconv.Itoa(int(iteration)))
+	log.Trace(g.cli + " -l" + strconv.Itoa(int(bitSize)) + " " + common.Bytes2Hex(seed) + " " + strconv.Itoa(int(iteration)))
 
 	var done chan struct{}
 	if stop != nil {

@@ -27,19 +27,24 @@ import (
 )
 
 func TestOutput(t *testing.T) {
-	delayer := NewDelayer(32)
+	delayer := NewDelayer(vdfGen, 32)
 	output := delayer.Get(input0, iteration0)
 	t.Log("main routine", "output", common.Bytes2Hex(output))
 }
 
 func TestOutputGo(t *testing.T) {
-	NoCLI()
+	UseGoVDF()
+	TestOutput(t)
+}
+
+func TestOutputNil(t *testing.T) {
+	vdfGen = ""
 	TestOutput(t)
 }
 
 func TestSequentialOutput(t *testing.T) {
 	var wg sync.WaitGroup
-	delayer := NewDelayer(32)
+	delayer := NewDelayer(vdfGen, 32)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -68,13 +73,13 @@ func TestSequentialOutput(t *testing.T) {
 }
 
 func TestSequentialOutputGo(t *testing.T) {
-	NoCLI()
+	UseGoVDF()
 	TestSequentialOutput(t)
 }
 
 func TestReplacedOutput(t *testing.T) {
 	var wg sync.WaitGroup
-	delayer := NewDelayer(32)
+	delayer := NewDelayer(vdfGen, 32)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -104,13 +109,13 @@ func TestReplacedOutput(t *testing.T) {
 }
 
 func TestReplacedOutputGo(t *testing.T) {
-	NoCLI()
+	UseGoVDF()
 	TestReplacedOutput(t)
 }
 
 func TestRacingOutput(t *testing.T) {
 	var wg sync.WaitGroup
-	delayer := NewDelayer(32)
+	delayer := NewDelayer(vdfGen, 32)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -139,13 +144,13 @@ func TestRacingOutput(t *testing.T) {
 }
 
 func TestRacingOutputGo(t *testing.T) {
-	NoCLI()
+	UseGoVDF()
 	TestRacingOutput(t)
 }
 
 func TestOutputBroadcasting(t *testing.T) {
 	var wg sync.WaitGroup
-	delayer := NewDelayer(32)
+	delayer := NewDelayer(vdfGen, 32)
 	for i := 0; i < 3; i++ {
 		wg.Add(1)
 		go func(i int) {
@@ -170,13 +175,13 @@ func TestOutputBroadcasting(t *testing.T) {
 }
 
 func TestOutputBroadcastingGo(t *testing.T) {
-	NoCLI()
+	UseGoVDF()
 	TestOutputBroadcasting(t)
 }
 
 func TestOutputReplacedBroadcasting(t *testing.T) {
 	var wg sync.WaitGroup
-	delayer := NewDelayer(32)
+	delayer := NewDelayer(vdfGen, 32)
 	for i := 0; i < 3; i++ {
 		wg.Add(1)
 		go func(i int) {
@@ -214,12 +219,12 @@ func TestOutputReplacedBroadcasting(t *testing.T) {
 }
 
 func TestOutputReplacedBroadcastingGo(t *testing.T) {
-	NoCLI()
+	UseGoVDF()
 	TestOutputReplacedBroadcasting(t)
 }
 
 func TestCache(t *testing.T) {
-	delayer := NewDelayer(32)
+	delayer := NewDelayer(vdfGen, 32)
 	output := delayer.Peek(input0, iteration0)
 	t.Log("peek", "output", common.Bytes2Hex(output))
 	output = delayer.Get(input0, iteration0)
@@ -231,12 +236,12 @@ func TestCache(t *testing.T) {
 }
 
 func TestCacheGo(t *testing.T) {
-	NoCLI()
+	UseGoVDF()
 	TestCache(t)
 }
 
 func TestRequest(t *testing.T) {
-	delayer := NewDelayer(32)
+	delayer := NewDelayer(vdfGen, 32)
 	delayer.Request(input0, iteration0)
 	delayer.Request(input1, iteration1)
 	time.Sleep(time.Second / 4)
@@ -249,13 +254,13 @@ func TestRequest(t *testing.T) {
 }
 
 func TestRequestGo(t *testing.T) {
-	NoCLI()
+	UseGoVDF()
 	TestRequest(t)
 }
 
 func TestLeakage(t *testing.T) {
 	defer leaktest.Check(t)()
-	delayer := NewDelayer(32)
+	delayer := NewDelayer(vdfGen, 32)
 	for i := uint64(1); i < iteration0/1000; i++ {
 		output := delayer.Get(input0, i)
 		if output != nil {
@@ -269,6 +274,6 @@ func TestLeakage(t *testing.T) {
 }
 
 func TestLeakageGo(t *testing.T) {
-	NoCLI()
+	UseGoVDF()
 	TestLeakage(t)
 }

@@ -30,14 +30,16 @@ const (
 )
 
 var (
+	vdfGen = "vdf-cli"
+
 	input0     = []byte{0x01, 0x02, 0x03, 0x04}
 	input1     = []byte{0x04, 0x03, 0x01, 0x01}
 	iteration0 = ITERATION_0
 	iteration1 = ITERATION_1
 )
 
-func NoCLI() {
-	InitCLI("non-exist") // use the vdf-go instead
+func UseGoVDF() {
+	vdfGen = vdfGenInternal
 	iteration0 = ITERATION_0 / 20
 	iteration1 = ITERATION_1 / 20
 }
@@ -45,18 +47,18 @@ func NoCLI() {
 func TestGenerateVerify(t *testing.T) {
 	bitSize := uint64(127)
 	stopCh := make(chan struct{})
-	output, err := Instance().Generate(input0, iteration0, bitSize, stopCh)
+	output, err := Generator(vdfGen).Generate(input0, iteration0, bitSize, stopCh)
 	if err != nil {
 		t.Error("Error", "err", err)
 		return
 	}
-	if !Instance().Verify(input0, output, iteration0, bitSize) {
+	if !Verify(input0, output, iteration0, bitSize) {
 		t.Error("Invalid ouput", "output", common.Bytes2Hex(output))
 	}
 }
 
 func TestGenerateVerifyGo(t *testing.T) {
-	NoCLI()
+	UseGoVDF()
 	TestGenerateVerify(t)
 }
 
@@ -70,7 +72,7 @@ func TestInterruptedGenerator(t *testing.T) {
 		default:
 		}
 	}()
-	output, err := Instance().Generate(input0, iteration0, bitSize, stopCh)
+	output, err := Generator(vdfGen).Generate(input0, iteration0, bitSize, stopCh)
 	if err != nil {
 		t.Error("Error", "err", err)
 		return
@@ -81,18 +83,18 @@ func TestInterruptedGenerator(t *testing.T) {
 }
 
 func TestInterruptedGeneratorGo(t *testing.T) {
-	NoCLI()
+	UseGoVDF()
 	TestInterruptedGenerator(t)
 }
 
 func TestLeak(t *testing.T) {
 	for i := uint64(1); i < iteration0/300; i++ {
-		output, err := Instance().Generate(input0, i, 127, nil)
+		output, err := Generator(vdfGen).Generate(input0, i, 127, nil)
 		if err != nil {
 			t.Error("error", "err", err)
 		}
 		if output != nil {
-			if Instance().Verify(input0, output, i, 127) {
+			if Verify(input0, output, i, 127) {
 				t.Log("success", "output", common.Bytes2Hex(output))
 			} else {
 				t.Error("failed", "output", common.Bytes2Hex(output))
@@ -102,6 +104,6 @@ func TestLeak(t *testing.T) {
 }
 
 func TestLeakGo(t *testing.T) {
-	NoCLI()
+	UseGoVDF()
 	TestLeak(t)
 }
