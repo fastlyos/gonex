@@ -161,6 +161,9 @@ func makeFullNode(ctx *cli.Context) *node.Node {
 	if ctx.GlobalIsSet(utils.PriceServiceURLFlag.Name) {
 		cfg.Eth.PriceServiceURL = ctx.GlobalString(utils.PriceServiceURLFlag.Name)
 	}
+	if ctx.GlobalIsSet(utils.VDFGen.Name) {
+		cfg.Eth.VDFGen = ctx.GlobalString(utils.VDFGen.Name)
+	}
 	utils.RegisterEthService(stack, &cfg.Eth)
 
 	if ctx.GlobalBool(utils.DashboardEnabledFlag.Name) {

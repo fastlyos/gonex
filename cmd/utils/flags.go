@@ -240,6 +240,10 @@ var (
 		Name:  "price.url",
 		Usage: "Fetching URL of a price service (host:port)",
 	}
+	VDFGen = cli.StringFlag{
+		Name:  "vdf.gen",
+		Usage: "VDF generator (disable|internal|<external VDF command>)",
+	}
 	RollbackFlag = cli.Int64Flag{
 		Name:  "rollback",
 		Usage: "Block number to rollback the chain before starting",
@@ -1736,7 +1740,7 @@ func MakeChain(ctx *cli.Context, stack *node.Node) (chain *core.BlockChain, chai
 	if config.Clique != nil {
 		engine = clique.New(config.Clique, chainDb)
 	} else if config.Dccs != nil {
-		engine = dccs.New(config.Dccs, chainDb, "")
+		engine = dccs.New(config.Dccs, chainDb, "", "")
 	} else {
 		engine = ethash.NewFaker()
 		if !ctx.GlobalBool(FakePoWFlag.Name) {

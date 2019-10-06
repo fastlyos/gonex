@@ -163,4 +163,7 @@ type Config struct {
 
 	// PriceServiceURL is service enpoint for the consensus.
 	PriceServiceURL string
+
+	// VDFGen is the VDF generator (disable|internal|<external VDF command>)
+	VDFGen string
 }
