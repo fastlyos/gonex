@@ -140,6 +140,7 @@ contract Preemptivable is Absorbable {
         internal
     {
         require(stake >= globalSuccessStake - globalSuccessStake / PARAM_TOLERANCE, "stake too low");
+        require(amount != 0, "zero absorption");
 
         absn.Proposal memory proposal;
 
@@ -207,17 +208,30 @@ contract Preemptivable is Absorbable {
             return false;
         }
         absn.Proposal storage proposal = proposals.get(maker);
+        adaptGlobalParams(proposal, rank);
         triggerPreemptive(proposal);
-        adaptParams(proposal, rank);
         return true;
     }
 
     // adapt the global params to the last winning preemptive
-    function adaptParams(absn.Proposal storage proposal, uint rank) internal {
-        globalSuccessRank = (globalSuccessRank + rank) >> 1;
-        globalSuccessStake = (globalSuccessStake + proposal.stake) >> 1;
-        globalLockdownExpiration = (globalLockdownExpiration + proposal.lockdownExpiration) >> 1;
-        globalSlashingDuration = (globalSlashingDuration + proposal.slashingDuration) >> 1;
+    function adaptGlobalParams(absn.Proposal storage proposal, uint rank) internal {
+        globalSuccessStake = util.avgCap(globalSuccessStake, proposal.stake);
+        globalSlashingDuration = util.avgCap(globalSlashingDuration, proposal.slashingDuration);
+        globalLockdownExpiration = util.avgCap(globalLockdownExpiration, proposal.lockdownExpiration);
+        globalSuccessRank = util.avgCap(globalSuccessRank, rank);
+    }
+
+    function getGlobalParams()
+        external
+        view
+        returns(
+            uint stake,
+            uint slashingDuration,
+            uint lockdownExpiration,
+            uint rank
+        )
+    {
+        return (globalSuccessStake, globalSlashingDuration, globalLockdownExpiration, globalSuccessRank);
     }
 
     // trigger an absorption from a maker's proposal

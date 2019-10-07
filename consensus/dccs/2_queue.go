@@ -295,11 +295,8 @@ func (c *Context) getSealingQueue(parentHash common.Hash) (*SealingQueue, error)
 		// use the difficulty for total number of recently active sealer count
 		diff := header.Difficulty.Uint64()
 		if header.Nonce == (types.BlockNonce{}) {
-			if diff&0x01 != 0 {
-				// prioritized difficulty cannot be odd number
-				return nil, errInvalidPrioritiezedDiff
-			}
 			// correct difficulty for prioritized block
+			// Note: incorrect for pre-CoLoa block
 			diff >>= 1
 		}
 		if diff > maxDiff {

@@ -96,12 +96,11 @@ var PrecompiledContractsCoLoa = map[common.Address]PrecompiledContract{
 }
 
 // RunPrecompiledContract runs and evaluates the output of a precompiled contract.
-func (evm *EVM) RunPrecompiledContract(p PrecompiledContract, input []byte, contract *Contract) (ret []byte, err error) {
+func RunPrecompiledContract(p PrecompiledContract, input []byte, contract *Contract) (ret []byte, err error) {
 	gas := p.RequiredGas(input)
 	if contract.UseGas(gas) {
 		return p.Run(input)
 	}
-	evm.LogFailure(contract.Address(), params.TopicError, params.ErrorLogOutOfGas)
 	return nil, ErrOutOfGas
 }
 
