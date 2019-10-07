@@ -70,7 +70,7 @@ func (d *Dccs) init2() *Dccs {
 	d.sealingQueueCache, _ = lru.NewARC(inmemorySealingQueues)
 	d.extDataCache, _ = lru.NewARC(inmemoryExtDatas)
 	d.anchorExtraCache, _ = lru.NewARC(inmemoryAnchorExtras)
-	d.queueShuffler = vdf.NewDelayer(randomSeedSize)
+	d.queueShuffler = vdf.NewDelayer(d.vdfGen, randomSeedSize)
 	return d
 }
 

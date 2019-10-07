@@ -151,6 +151,7 @@ var (
 		utils.EWASMInterpreterFlag,
 		utils.EVMInterpreterFlag,
 		utils.PriceServiceURLFlag,
+		utils.VDFGen,
 		utils.RollbackFlag,
 		configFileFlag,
 	}

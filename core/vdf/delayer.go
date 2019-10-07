@@ -20,7 +20,6 @@ package vdf
 import (
 	"bytes"
 	"encoding/binary"
-	"fmt"
 	"runtime"
 	"sync"
 
@@ -40,6 +39,7 @@ import (
 //   bitSize value of 2^n-1 is recommened
 //   output size (in bytes) will be ((bitSize+16)>>4)*4
 type Delayer struct {
+	vdfGen   *generator
 	bitSize  uint64
 	loopOnce sync.Once
 	stopCh   chan struct{}        // to stop all running vdf routines
@@ -50,9 +50,10 @@ type Delayer struct {
 }
 
 // NewDelayer creates a new Delayer instance
-func NewDelayer(outputSize uint64) *Delayer {
+func NewDelayer(genName string, outputSize uint64) *Delayer {
 	outputCache, _ := lru.NewARC(8)
 	return &Delayer{
+		vdfGen:  Generator(genName),
 		bitSize: outputSize<<2 - 1,
 		stopCh:  make(chan struct{}),
 		reqCh:   make(chan task),
@@ -71,7 +72,7 @@ func (d *Delayer) Verify(seed, output []byte, iteration uint64) bool {
 	if cached, ok := d.outputCache.Get(t.GetKey()); ok {
 		return bytes.Equal(output, cached.([]byte))
 	}
-	return Instance().Verify(seed, output, iteration, d.bitSize)
+	return Verify(seed, output, iteration, d.bitSize)
 }
 
 // Get request new delay task and block for output.
@@ -159,11 +160,10 @@ func (d *Delayer) loop() {
 
 			// start new worker routine
 			go func(t task, resCh chan<- []byte) {
-				output, err := Instance().Generate(t.seed, t.iteration, d.bitSize, d.stopCh)
+				output, err := d.vdfGen.Generate(t.seed, t.iteration, d.bitSize, d.stopCh)
 				defer close(resCh)
 				if err != nil {
 					log.Error("Delayer: VDF worker loop failed", "err", err)
-					fmt.Printf("Delayer: VDF worker loop failed, err=%v\n", err)
 					return
 				}
 				if len(output) == 0 {

@@ -564,7 +564,7 @@ func (c *vdfVerify) Run(input []byte) (valid []byte, err error) {
 		"seed", common.ToHex(seed),
 		"output", common.ToHex(output))
 
-	ok := vdf.Instance().Verify(seed, output, iteration, bitSize)
+	ok := vdf.Verify(seed, output, iteration, bitSize)
 	log.Trace("VDFVerify", "valid", ok)
 	if ok {
 		return true32Byte, nil

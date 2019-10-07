@@ -156,11 +156,12 @@ type Dccs struct {
 	priceEngineOnce sync.Once
 
 	priceURL string
+	vdfGen   string
 }
 
 // New creates a Dccs proof-of-foundation consensus engine with the initial
 // signers set to the ones provided by the user.
-func New(config *params.DccsConfig, db ethdb.Database, priceServiceURL string) *Dccs {
+func New(config *params.DccsConfig, db ethdb.Database, priceServiceURL, vdfGen string) *Dccs {
 	// Set any missing consensus parameters to their defaults
 	conf := *config
 	if conf.Epoch == 0 {
@@ -176,6 +177,7 @@ func New(config *params.DccsConfig, db ethdb.Database, priceServiceURL string) *
 		recents:    recents,
 		signatures: signatures,
 		priceURL:   priceServiceURL,
+		vdfGen:     vdfGen,
 	}
 
 	return dccs.init2()
