@@ -343,8 +343,17 @@ func (c *Context) getHeaderByHash(hash common.Hash) *types.Header {
 }
 
 func (c *Context) getChainRandomHeader(parent *types.Header) *types.Header {
-	seedNumber := parent.Number.Uint64() - parent.Nonce.Uint64()
-	return c.getHeaderByNumber(seedNumber)
+	distance := parent.Nonce.Uint64()
+	if distance >= params.CanonicalDepth {
+		// optimization for canonical chain
+		seedNumber := parent.Number.Uint64() - distance
+		return c.getHeaderByNumber(seedNumber)
+	}
+	// properly crawl back the non-canonical chain
+	for i := distance; i > 0; i-- {
+		parent = c.getHeaderByHash(parent.ParentHash)
+	}
+	return parent
 }
 
 func (c *Context) getChainRandomInput(parent *types.Header) common.Hash {
