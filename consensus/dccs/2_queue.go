@@ -192,7 +192,7 @@ func (q *SealingQueue) offset(signer common.Address,
 	return offset, nil
 }
 
-func (q *SealingQueue) difficulty(address common.Address, prioritized bool,
+func (q *SealingQueue) difficulty(address common.Address,
 	getHeaderByHash func(common.Hash) *types.Header,
 	sigCache *lru.ARCCache) uint64 {
 
@@ -201,13 +201,7 @@ func (q *SealingQueue) difficulty(address common.Address, prioritized bool,
 		return 0
 	}
 
-	diff := uint64(len(q.active) - offset)
-
-	if prioritized {
-		diff <<= 1
-	}
-
-	return diff
+	return uint64(len(q.active) - offset)
 }
 
 // recents len is MIN(lastActiveLen,activeLen)*2/3
@@ -294,11 +288,6 @@ func (c *Context) getSealingQueue(parentHash common.Hash) (*SealingQueue, error)
 
 		// use the difficulty for total number of recently active sealer count
 		diff := header.Difficulty.Uint64()
-		if header.Nonce == (types.BlockNonce{}) {
-			// correct difficulty for prioritized block
-			// Note: incorrect for pre-CoLoa block
-			diff >>= 1
-		}
 		if diff > maxDiff {
 			maxDiff = diff
 		}
