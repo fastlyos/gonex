@@ -42,7 +42,7 @@ var (
 	RinkebyGenesisHash = common.HexToHash("0x6341fd3daf94b748c72ced5a5b26028f2474f5f00d824504e4fa37a75767e177")
 	GoerliGenesisHash  = common.HexToHash("0xbf7e331f7f7c1dd2e05159666b3bf8bc7a8a3a9eb1d518969eab529dd9b88c1a")
 	ZeroAddress        = common.HexToAddress("0x0000000000000000000000000000000000000000")
-	ExecAddress        = common.HexToAddress("0xcccccccccccccccccccccccccccccccccccccccc")
+	ExecAddress        = common.HexToAddress("0x1111111111111111111111111111111111111111")
 	TokenAddress       = common.HexToAddress("0x2c783ad80ff980ec75468477e3dd9f86123ecbda") // NTF token contract address
 	GovernanceAddress  = common.HexToAddress("0x12345")
 	// CoLoa contract addresses
