@@ -48,6 +48,9 @@ var (
 var (
 	// SolidityErrorSignature is Keccak("Error(string)")
 	SolidityErrorSignature = []byte{0x08, 0xc3, 0x79, 0xa0}
+
+	// GonexErrorSignature is Keccak("Error")
+	GonexErrorSignature = []byte{0xe3, 0x42, 0xda, 0xa4}
 )
 
 // GetSolidityRevertMessage handles Solidity revert and require message.

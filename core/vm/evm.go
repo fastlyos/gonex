@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
@@ -101,8 +100,8 @@ type Context struct {
 	Time        *big.Int       // Provides information for TIME
 	Difficulty  *big.Int       // Provides information for DIFFICULTY
 
-	// extra logs to append to the receipt after the regular logs
-	Logs []*types.Log
+	// TODO
+	FailureReason string
 }
 
 // EVM is the Ethereum Virtual Machine base object and provides
@@ -181,15 +180,9 @@ func NewEVM(ctx Context, statedb StateDB, chainConfig *params.ChainConfig, vmCon
 // LogFailure appends the failure reason or revert message to receipt log
 // after the state has be reverted
 func (evm *EVM) LogFailure(address common.Address, topic common.Hash, reason string) {
-	if !evm.chainRules.IsCoLoa {
-		return
+	if topic != params.TopicRevert {
+		evm.FailureReason = reason
 	}
-	log := types.Log{
-		Address: address,
-		Topics:  []common.Hash{topic},
-		Data:    []byte(reason),
-	}
-	evm.Logs = append(evm.Logs, &log)
 }
 
 func (evm *EVM) IgnoreNonce() bool {
