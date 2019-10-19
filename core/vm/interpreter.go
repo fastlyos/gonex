@@ -302,7 +302,11 @@ func (in *EVMInterpreter) Run(contract *Contract, input []byte, readOnly bool) (
 			return nil, err
 		case operation.reverts:
 			msg := params.GetSolidityRevertMessage(res)
-			in.evm.LogFailure(contract.Address(), params.TopicRevert, msg)
+			if len(msg) == 0 {
+				in.evm.LogFailure(contract.Address(), params.TopicRevertUnknown, params.ErrorLogRevertUnknown)
+			} else {
+				in.evm.LogFailure(contract.Address(), params.TopicRevert, msg)
+			}
 			return res, errExecutionReverted
 		case operation.halts:
 			return res, nil

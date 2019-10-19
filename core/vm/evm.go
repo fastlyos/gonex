@@ -181,6 +181,7 @@ func NewEVM(ctx Context, statedb StateDB, chainConfig *params.ChainConfig, vmCon
 // after the state has be reverted
 func (evm *EVM) LogFailure(address common.Address, topic common.Hash, reason string) {
 	if topic != params.TopicRevert {
+		// solidity revert already returns the reason string
 		evm.FailureReason = reason
 	}
 }

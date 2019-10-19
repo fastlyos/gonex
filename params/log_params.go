@@ -24,6 +24,7 @@ import (
 )
 
 const (
+	ErrorLogRevertUnknown            = "revert with no reason"
 	ErrorLogInvalidOpCode            = "invalid opcode 0x%x"
 	ErrorLogStackUnderflow           = "stack underflow (%d <=> %d)"
 	ErrorLogStackLimitReached        = "stack limit reached %d (%d)"
@@ -41,8 +42,9 @@ const (
 )
 
 var (
-	TopicError  = common.BytesToHash([]byte{0x00})
-	TopicRevert = common.BytesToHash([]byte{0x01})
+	TopicError         = common.BytesToHash([]byte{0x00})
+	TopicRevert        = common.BytesToHash([]byte{0x01})
+	TopicRevertUnknown = common.BytesToHash([]byte{0x02})
 )
 
 var (
