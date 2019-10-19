@@ -177,13 +177,9 @@ func NewEVM(ctx Context, statedb StateDB, chainConfig *params.ChainConfig, vmCon
 	return evm
 }
 
-// LogFailure appends the failure reason or revert message to receipt log
-// after the state has be reverted
-func (evm *EVM) LogFailure(address common.Address, topic common.Hash, reason string) {
-	if topic != params.TopicRevert {
-		// solidity revert already returns the reason string
-		evm.FailureReason = reason
-	}
+// LogFailure record the failure reason to later return for the api call
+func (evm *EVM) LogFailure(reason string) {
+	evm.FailureReason = reason
 }
 
 func (evm *EVM) IgnoreNonce() bool {
@@ -217,12 +213,12 @@ func (evm *EVM) Call(caller ContractRef, addr common.Address, input []byte, gas 
 
 	// Fail if we're trying to execute above the call depth limit
 	if evm.depth > int(params.CallCreateDepth) {
-		evm.LogFailure(addr, params.TopicError, params.ErrorLogDepth)
+		evm.LogFailure(params.ErrorLogDepth)
 		return nil, gas, ErrDepth
 	}
 	// Fail if we're trying to transfer more than the available balance
 	if !evm.Context.CanTransfer(evm.StateDB, caller.Address(), value) {
-		evm.LogFailure(addr, params.TopicError, params.ErrorLogInsufficientBalance)
+		evm.LogFailure(params.ErrorLogInsufficientBalance)
 		return nil, gas, ErrInsufficientBalance
 	}
 
@@ -300,7 +296,7 @@ func (evm *EVM) ExecCall(caller ContractRef, code []byte, gas uint64, value *big
 
 	// Fail if we're trying to execute above the call depth limit
 	if evm.depth > int(params.CallCreateDepth) {
-		evm.LogFailure(to, params.TopicError, params.ErrorLogDepth)
+		evm.LogFailure(params.ErrorLogDepth)
 		return nil, gas, ErrDepth
 	}
 
@@ -343,7 +339,7 @@ func (evm *EVM) ExecCall(caller ContractRef, code []byte, gas uint64, value *big
 			evm.StateDB.RevertToSnapshot(snapshot)
 			contract.UseGas(contract.Gas)
 			// log the failure error
-			evm.LogFailure(to, params.TopicError, params.ErrorLogTxCodeOverspent)
+			evm.LogFailure(params.ErrorLogTxCodeOverspent)
 			return nil, contract.Gas, errTxCodeOverspent
 		}
 	}
@@ -364,12 +360,12 @@ func (evm *EVM) CallCode(caller ContractRef, addr common.Address, input []byte, 
 
 	// Fail if we're trying to execute above the call depth limit
 	if evm.depth > int(params.CallCreateDepth) {
-		evm.LogFailure(addr, params.TopicError, params.ErrorLogDepth)
+		evm.LogFailure(params.ErrorLogDepth)
 		return nil, gas, ErrDepth
 	}
 	// Fail if we're trying to transfer more than the available balance
 	if !evm.CanTransfer(evm.StateDB, caller.Address(), value) {
-		evm.LogFailure(addr, params.TopicError, params.ErrorLogInsufficientBalance)
+		evm.LogFailure(params.ErrorLogInsufficientBalance)
 		return nil, gas, ErrInsufficientBalance
 	}
 
@@ -403,7 +399,7 @@ func (evm *EVM) DelegateCall(caller ContractRef, addr common.Address, input []by
 	}
 	// Fail if we're trying to execute above the call depth limit
 	if evm.depth > int(params.CallCreateDepth) {
-		evm.LogFailure(addr, params.TopicError, params.ErrorLogDepth)
+		evm.LogFailure(params.ErrorLogDepth)
 		return nil, gas, ErrDepth
 	}
 
@@ -436,7 +432,7 @@ func (evm *EVM) StaticCall(caller ContractRef, addr common.Address, input []byte
 	}
 	// Fail if we're trying to execute above the call depth limit
 	if evm.depth > int(params.CallCreateDepth) {
-		evm.LogFailure(addr, params.TopicError, params.ErrorLogDepth)
+		evm.LogFailure(params.ErrorLogDepth)
 		return nil, gas, ErrDepth
 	}
 
@@ -485,11 +481,11 @@ func (evm *EVM) create(caller ContractRef, codeAndHash *codeAndHash, gas uint64,
 	// Depth check execution. Fail if we're trying to execute above the
 	// limit.
 	if evm.depth > int(params.CallCreateDepth) {
-		evm.LogFailure(common.Address{}, params.TopicError, params.ErrorLogDepth)
+		evm.LogFailure(params.ErrorLogDepth)
 		return nil, common.Address{}, gas, ErrDepth
 	}
 	if !evm.CanTransfer(evm.StateDB, caller.Address(), value) {
-		evm.LogFailure(common.Address{}, params.TopicError, params.ErrorLogInsufficientBalance)
+		evm.LogFailure(params.ErrorLogInsufficientBalance)
 		return nil, common.Address{}, gas, ErrInsufficientBalance
 	}
 	nonce := evm.StateDB.GetNonce(caller.Address())
@@ -498,7 +494,7 @@ func (evm *EVM) create(caller ContractRef, codeAndHash *codeAndHash, gas uint64,
 	// Ensure there's no existing contract already at the designated address
 	contractHash := evm.StateDB.GetCodeHash(address)
 	if evm.StateDB.GetNonce(address) != 0 || (contractHash != (common.Hash{}) && contractHash != EmptyCodeHash) {
-		evm.LogFailure(common.Address{}, params.TopicError, params.ErrorLogContractAddressCollision)
+		evm.LogFailure(params.ErrorLogContractAddressCollision)
 		return nil, common.Address{}, 0, ErrContractAddressCollision
 	}
 	// Create a new account on the state
@@ -536,7 +532,7 @@ func (evm *EVM) create(caller ContractRef, codeAndHash *codeAndHash, gas uint64,
 		if contract.UseGas(createDataGas) {
 			evm.StateDB.SetCode(address, ret)
 		} else {
-			evm.LogFailure(common.Address{}, params.TopicError, params.ErrorLogCodeStoreOutOfGas)
+			evm.LogFailure(params.ErrorLogCodeStoreOutOfGas)
 			err = ErrCodeStoreOutOfGas
 		}
 	}
@@ -552,7 +548,7 @@ func (evm *EVM) create(caller ContractRef, codeAndHash *codeAndHash, gas uint64,
 	}
 	// Assign err if contract code size exceeds the max while the err is still empty.
 	if maxCodeSizeExceeded && err == nil {
-		evm.LogFailure(common.Address{}, params.TopicError, params.ErrorLogMaxCodeSizeExceeded)
+		evm.LogFailure(params.ErrorLogMaxCodeSizeExceeded)
 		err = errMaxCodeSizeExceeded
 	}
 	if evm.vmConfig.Debug && evm.depth == 0 {

@@ -101,7 +101,7 @@ func (evm *EVM) RunPrecompiledContract(p PrecompiledContract, input []byte, cont
 	if contract.UseGas(gas) {
 		return p.Run(input)
 	}
-	evm.LogFailure(contract.Address(), params.TopicError, params.ErrorLogOutOfGas)
+	evm.LogFailure(params.ErrorLogOutOfGas)
 	return nil, ErrOutOfGas
 }
 
