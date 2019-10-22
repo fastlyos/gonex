@@ -17,6 +17,7 @@
 package vm
 
 import (
+	"errors"
 	"fmt"
 	"hash"
 	"sync/atomic"
@@ -25,6 +26,7 @@ import (
 	"github.com/ethereum/go-ethereum/common/math"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/params"
 )
 
 // Config are the configuration options for the Interpreter
@@ -194,6 +196,7 @@ func (in *EVMInterpreter) Run(contract *Contract, input []byte, readOnly bool) (
 			}
 		}()
 	}
+
 	// The Interpreter main run loop (contextual). This loop runs until either an
 	// explicit STOP, RETURN or SELFDESTRUCT is executed, an error occurred during
 	// the execution of one of the operations or until the done flag is set by the
@@ -209,13 +212,19 @@ func (in *EVMInterpreter) Run(contract *Contract, input []byte, readOnly bool) (
 		op = contract.GetOp(pc)
 		operation := in.cfg.JumpTable[op]
 		if !operation.valid {
-			return nil, fmt.Errorf("invalid opcode 0x%x", int(op))
+			failure := fmt.Sprintf(params.ErrorLogInvalidOpCode, int(op))
+			in.evm.LogFailure(failure)
+			return nil, errors.New(failure)
 		}
 		// Validate stack
 		if sLen := stack.len(); sLen < operation.minStack {
-			return nil, fmt.Errorf("stack underflow (%d <=> %d)", sLen, operation.minStack)
+			failure := fmt.Sprintf(params.ErrorLogStackUnderflow, sLen, operation.minStack)
+			in.evm.LogFailure(failure)
+			return nil, errors.New(failure)
 		} else if sLen > operation.maxStack {
-			return nil, fmt.Errorf("stack limit reached %d (%d)", sLen, operation.maxStack)
+			failure := fmt.Sprintf(params.ErrorLogStackLimitReached, sLen, operation.maxStack)
+			in.evm.LogFailure(failure)
+			return nil, errors.New(failure)
 		}
 		// If the operation is valid, enforce and write restrictions
 		if in.readOnly && in.evm.chainRules.IsByzantium {
@@ -225,12 +234,14 @@ func (in *EVMInterpreter) Run(contract *Contract, input []byte, readOnly bool) (
 			// account to the others means the state is modified and should also
 			// return with an error.
 			if operation.writes || (op == CALL && stack.Back(2).Sign() != 0) {
+				in.evm.LogFailure(params.ErrorLogWriteProtection)
 				return nil, errWriteProtection
 			}
 		}
 		// Static portion of gas
 		cost = operation.constantGas // For tracing
 		if !contract.UseGas(operation.constantGas) {
+			in.evm.LogFailure(params.ErrorLogOutOfGas)
 			return nil, ErrOutOfGas
 		}
 
@@ -242,11 +253,13 @@ func (in *EVMInterpreter) Run(contract *Contract, input []byte, readOnly bool) (
 		if operation.memorySize != nil {
 			memSize, overflow := operation.memorySize(stack)
 			if overflow {
+				in.evm.LogFailure(params.ErrorLogGasUintOverflow)
 				return nil, errGasUintOverflow
 			}
 			// memory is expanded in words of 32 bytes. Gas
 			// is also calculated in words.
 			if memorySize, overflow = math.SafeMul(toWordSize(memSize), 32); overflow {
+				in.evm.LogFailure(params.ErrorLogGasUintOverflow)
 				return nil, errGasUintOverflow
 			}
 		}
@@ -258,6 +271,7 @@ func (in *EVMInterpreter) Run(contract *Contract, input []byte, readOnly bool) (
 			dynamicCost, err = operation.dynamicGas(in.evm, contract, stack, mem, memorySize)
 			cost += dynamicCost // total cost, for debug tracing
 			if err != nil || !contract.UseGas(dynamicCost) {
+				in.evm.LogFailure(params.ErrorLogOutOfGas)
 				return nil, ErrOutOfGas
 			}
 		}
@@ -287,6 +301,9 @@ func (in *EVMInterpreter) Run(contract *Contract, input []byte, readOnly bool) (
 		case err != nil:
 			return nil, err
 		case operation.reverts:
+			if len(res) == 0 {
+				in.evm.LogFailure(params.ErrorLogRevertUnknown)
+			}
 			return res, errExecutionReverted
 		case operation.halts:
 			return res, nil

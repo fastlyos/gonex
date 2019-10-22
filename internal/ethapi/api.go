@@ -876,6 +876,10 @@ func DoCall(ctx context.Context, b Backend, args CallArgs, blockNrOrHash rpc.Blo
 	if evm.Cancelled() {
 		return nil, 0, false, fmt.Errorf("execution aborted (timeout = %v)", timeout)
 	}
+	if len(evm.FailureReason) > 0 {
+		failed = true
+		res = append(params.GonexErrorSignature, evm.FailureReason...)
+	}
 	return res, gas, failed, err
 }
 
