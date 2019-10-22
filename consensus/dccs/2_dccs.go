@@ -269,11 +269,8 @@ func (c *Context) verifySeal2() error {
 		return errRecentlySigned
 	}
 
-	// block with random seed or the CoLoa hardfork block
-	prioritized := header.Nonce == types.BlockNonce{}
-
 	// Ensure that the difficulty corresponds to the turn-ness of the signer
-	signerDifficulty := queue.difficulty(signer, prioritized, c.getHeaderByHash, c.engine.signatures)
+	signerDifficulty := queue.difficulty(signer, c.getHeaderByHash, c.engine.signatures)
 	if header.Difficulty.Uint64() != signerDifficulty {
 		return errInvalidDifficulty
 	}
@@ -343,8 +340,17 @@ func (c *Context) getHeaderByHash(hash common.Hash) *types.Header {
 }
 
 func (c *Context) getChainRandomHeader(parent *types.Header) *types.Header {
-	seedNumber := parent.Number.Uint64() - parent.Nonce.Uint64()
-	return c.getHeaderByNumber(seedNumber)
+	distance := parent.Nonce.Uint64()
+	if distance >= params.CanonicalDepth {
+		// optimization for canonical chain
+		seedNumber := parent.Number.Uint64() - distance
+		return c.getHeaderByNumber(seedNumber)
+	}
+	// properly crawl back the non-canonical chain
+	for i := distance; i > 0; i-- {
+		parent = c.getHeaderByHash(parent.ParentHash)
+	}
+	return parent
 }
 
 func (c *Context) getChainRandomInput(parent *types.Header) common.Hash {
@@ -502,11 +508,8 @@ func (c *Context) prepare2(header *types.Header) error {
 		header.Nonce = c.getBlockNonce(parent)
 	}
 
-	// block with random seed or the CoLoa hardfork block
-	prioritized := header.Nonce == types.BlockNonce{}
-
 	// Set the correct difficulty
-	difficulty := queue.difficulty(c.engine.signer, prioritized, c.chain.GetHeaderByHash, c.engine.signatures)
+	difficulty := queue.difficulty(c.engine.signer, c.chain.GetHeaderByHash, c.engine.signatures)
 	header.Difficulty = new(big.Int).SetUint64(difficulty)
 
 	var price *Price
