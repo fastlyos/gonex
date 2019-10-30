@@ -91,8 +91,7 @@ contract Absorbable is Orderbook {
             }
         }
         if (last.isAbsorbing(supply)) {
-            int nextAmount = calcNextAbsorption();
-            absorb(nextAmount);
+            absorb();
         }
     }
 
@@ -104,6 +103,9 @@ contract Absorbable is Orderbook {
             return 0;
         }
         int amount = total / DURATION;
+        if (last.isPreemptive) {
+            amount /= 2;
+        }
         if (!util.inOrder(0, amount, remain)) {
             // don't over absorb
             return remain;
@@ -164,17 +166,46 @@ contract Absorbable is Orderbook {
         emit Stop();
     }
 
-    function absorb(
-        int stableTokenAmount
-    )
-        internal
-        returns(uint totalVOL, uint totalSTB)
-    {
-        dex.Book storage book = books[stableTokenAmount > 0 ? Ask : Bid];
+    function absorb() internal {
+        int amount = calcNextAbsorption();
+        dex.Book storage book = books[amount > 0 ? Ask : Bid];
         bool useHaveAmount = book.haveToken == StablizeToken;
-        if (last.isPreemptive) {
-            return book.absorbPreemptive(useHaveAmount, util.abs(stableTokenAmount), lockdown.maker);
+
+        (uint totalBMT, uint totalAMT) = book.absorb(useHaveAmount, util.abs(amount));
+
+        if (!last.isPreemptive) {
+            return;
         }
-        return book.absorb(useHaveAmount, util.abs(stableTokenAmount));
+
+        // preemptive
+        if (totalAMT == 0 || totalBMT == 0) {
+            // no main absorb, no side absorb
+            return;
+        }
+
+        // check the remain absorption
+        uint supply = StablizeToken.totalSupply();
+        if (!last.isAbsorbing(supply)) {
+            return; // target reached, skip side-absorption
+        }
+
+        // book.absorbPreemptive(useHaveAmount, util.abs(amount), lockdown.maker);
+        (uint haveAMT, uint wantAMT) = useHaveAmount ? (totalAMT, totalBMT) : (totalBMT, totalAMT);
+
+        address initiator = lockdown.maker;
+        if (haveAMT > book.haveToken.allowance(initiator, address(this)) ||
+            haveAMT > book.haveToken.balanceOf(initiator)) {
+            // not enough allowance for side absorption
+            return;
+        }
+
+        book.haveToken.transferFrom(initiator, book.haveToken.dex(), haveAMT);
+        book.haveToken.dexBurn(haveAMT);
+        book.wantToken.dexMint(wantAMT);
+        book.wantToken.transfer(initiator, wantAMT);
+        // accumulate the side-absorb
+        // totalAMT += useHaveAmount ? haveAMT : wantAMT;
+        // totalBMT += useHaveAmount ? wantAMT : haveAMT;
+        // emit SideFill(initiator, haveAMT, wantAMT);
     }
 }
