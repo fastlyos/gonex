@@ -15,8 +15,6 @@ contract Absorbable is Orderbook {
 
     event Absorption(int256 amount, uint256 supply, bool emptive);
     event Stop();
-    event Slash(address indexed maker, uint256 amount);
-    event Unlock(address indexed maker);
 
     IToken VolatileToken;
     IToken StablizeToken; // spelling intented
@@ -84,9 +82,6 @@ contract Absorbable is Orderbook {
             // absorption takes no longer than one duration
             stopAbsorption();
         }
-        if (lockdown.unlockable()) {
-            unlock();
-        }
         uint supply = StablizeToken.totalSupply();
         if (target > 0) { // absorption block
             if (shouldTriggerPassive()) {
@@ -94,18 +89,9 @@ contract Absorbable is Orderbook {
             } else if (shouldTriggerActive(supply, target)) {
                 triggerAbsorption(target, supply, true, false);
             }
-            if (lockdown.isLocked()) {
-                // WIP: slash the pre-emptive maker if target goes wrong way
-                int diviation = util.sub(target, supply);
-                if (checkAndSlash(diviation) && last.isPreemptive) {
-                    // lockdown violation, halt the preemptive absorption for this block
-                    return;
-                }
-            }
         }
         if (last.isAbsorbing(supply)) {
-            int nextAmount = calcNextAbsorption();
-            absorb(nextAmount);
+            absorb();
         }
     }
 
@@ -117,6 +103,9 @@ contract Absorbable is Orderbook {
             return 0;
         }
         int amount = total / DURATION;
+        if (last.isPreemptive) {
+            amount /= 2;
+        }
         if (!util.inOrder(0, amount, remain)) {
             // don't over absorb
             return remain;
@@ -163,21 +152,11 @@ contract Absorbable is Orderbook {
         }
     }
 
-    function unlock() internal {
-        if (!lockdown.exists()) {
-            return;
-        }
-        if (lockdown.stake > 0) {
-            VolatileToken.transfer(lockdown.maker, lockdown.stake);
-        }
-        emit Unlock(lockdown.maker);
-        delete lockdown;
-    }
-
     function triggerAbsorption(uint target, uint supply, bool emptive, bool isPreemptive) internal {
         last = absn.Absorption(block.number + EXPIRATION,
             supply,
             target,
+            false,
             isPreemptive);
         int amount = util.sub(target, supply);
         emit Absorption(amount, supply, emptive);
@@ -188,49 +167,46 @@ contract Absorbable is Orderbook {
         emit Stop();
     }
 
-    function absorb(
-        int stableTokenAmount
-    )
-        internal
-        returns(uint totalVOL, uint totalSTB)
-    {
-        dex.Book storage book = books[stableTokenAmount > 0 ? Ask : Bid];
+    function absorb() internal {
+        int amount = calcNextAbsorption();
+        dex.Book storage book = books[amount > 0 ? Ask : Bid];
         bool useHaveAmount = book.haveToken == StablizeToken;
-        if (last.isPreemptive) {
-            return book.absorbPreemptive(useHaveAmount, util.abs(stableTokenAmount), lockdown.maker);
-        }
-        return book.absorb(useHaveAmount, util.abs(stableTokenAmount));
-    }
 
-    /**
-     * @dev slash the initiator whenever the price is moving in
-     * opposition direction with the initiator's direction,
-     * the initiator's deposited balance will be minus by slashed
-     *
-     * slashed = MIN(PeA.Stake, MAX(1, -Diviation/PeA.Amount / PeA.SlashingDuration))
-     *
-     * @return true if the lockdown is violated and get slashed
-     */
-    function checkAndSlash(int diviation) internal returns (bool) {
-        if (!util.inOrder(lockdown.amount, 0, diviation)) {
-            // same direction, no slashing
-            return false;
+        (uint totalBMT, uint totalAMT) = book.absorb(useHaveAmount, util.abs(amount));
+
+        if (!last.isPreemptive) {
+            return;
         }
-        // lockdown violated
-        uint slashed = uint(-diviation/lockdown.amount) / lockdown.slashingDuration;
-        if (slashed == 0) {
-            slashed = 1; // minimum 1 wei
+
+        // preemptive
+        if (totalAMT == 0 || totalBMT == 0) {
+            // no main absorb, no side absorb
+            return;
         }
-        if (lockdown.stake < slashed) {
-            slashed = lockdown.stake;
-            // there's nothing at stake anymore, clear the lockdown and its absorption
-            stopAbsorption();
-            unlock();
+
+        // check the remain absorption
+        uint supply = StablizeToken.totalSupply();
+        if (!last.isAbsorbing(supply)) {
+            return; // target reached, skip side-absorption
         }
-        lockdown.stake -= slashed;
-        VolatileToken.dexBurn(slashed);
-        emit Slash(lockdown.maker, slashed);
-        // this slashed NTY will be burnt by the consensus by calling setBalance
-        return true;
+
+        // book.absorbPreemptive(useHaveAmount, util.abs(amount), lockdown.maker);
+        (uint haveAMT, uint wantAMT) = useHaveAmount ? (totalAMT, totalBMT) : (totalBMT, totalAMT);
+
+        address initiator = lockdown.maker;
+        if (haveAMT > book.haveToken.allowance(initiator, address(this)) ||
+            haveAMT > book.haveToken.balanceOf(initiator)) {
+            // not enough allowance for side absorption
+            return;
+        }
+
+        book.haveToken.transferFrom(initiator, book.haveToken.dex(), haveAMT);
+        book.haveToken.dexBurn(haveAMT);
+        book.wantToken.dexMint(wantAMT);
+        book.wantToken.transfer(initiator, wantAMT);
+        // accumulate the side-absorb
+        // totalAMT += useHaveAmount ? haveAMT : wantAMT;
+        // totalBMT += useHaveAmount ? wantAMT : haveAMT;
+        // emit SideFill(initiator, haveAMT, wantAMT);
     }
 }
