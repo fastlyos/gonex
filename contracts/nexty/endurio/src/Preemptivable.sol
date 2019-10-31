@@ -20,7 +20,7 @@ contract Preemptivable is Absorbable {
         int256 amount,
         uint256 stake,
         uint256 lockdownExpiration,
-        uint256 slashingDuration
+        uint256 slashingPace
     );
     event Preemptive(
         address indexed maker,
@@ -34,8 +34,9 @@ contract Preemptivable is Absorbable {
     address constant ZERO_ADDRESS = address(0x0);
 
     // adapting global default parameters, only used if proposal maker doesn't specify them
-    uint internal globalLockdownExpiration = 2 weeks / 1 seconds;
-    uint internal globalSlashingDuration = globalLockdownExpiration / 2;
+    uint internal globalLockdownExpiration = 2 weeks / 2 seconds;
+    // pace = 1/rate
+    uint internal globalSlashingPace = 1 weeks / 10 minutes; // each price block for a week
 
     // adapting global requirement
     uint internal globalSuccessRank = 0;
@@ -56,13 +57,13 @@ contract Preemptivable is Absorbable {
     map.AddressBool[] votesToClear;
 
     constructor (
-        uint absorptionDuration,
+        uint absorptionPace,
         uint absorptionExpiration,
-        uint initialSlashingDuration,
+        uint initialSlashingPace,
         uint initialLockdownExpiration
     )
         Absorbable(
-            absorptionDuration,
+            absorptionPace,
             absorptionExpiration
         )
         public
@@ -70,8 +71,8 @@ contract Preemptivable is Absorbable {
         if (initialLockdownExpiration > 0) {
             globalLockdownExpiration = initialLockdownExpiration;
         }
-        globalSlashingDuration = initialSlashingDuration > 0 ?
-            initialSlashingDuration : globalLockdownExpiration / 2;
+        globalSlashingPace = initialSlashingPace > 0 ?
+            initialSlashingPace : globalLockdownExpiration / 2;
     }
 
     // Token transfer's fallback
@@ -92,7 +93,7 @@ contract Preemptivable is Absorbable {
             require(!proposals.has(maker), "already has a proposal");
 
             (   int amount,
-                uint slashingDuration,
+                uint slashingPace,
                 uint lockdownExpiration,
                 bytes32 reserve // reserve params to distinguish proposal and trading request
             ) = abi.decode(data, (int, uint, uint, bytes32));
@@ -100,7 +101,7 @@ contract Preemptivable is Absorbable {
             // unused
             reserve = bytes32(0);
 
-            propose(maker, amount, value, slashingDuration, lockdownExpiration);
+            propose(maker, amount, value, slashingPace, lockdownExpiration);
             return;
         }
 
@@ -132,9 +133,9 @@ contract Preemptivable is Absorbable {
         if (target > 0) { // price block
             if (lockdown.isLocked() && last.isPreemptive) {
                 uint supply = StablizeToken.totalSupply();
-                int diviation = util.sub(target, supply);
+                int deviation = util.sub(target, supply);
                 // halt the PeA if lockdown is violated
-                last.isHalted = diviation != 0 && checkAndSlash(diviation);
+                last.isHalted = deviation != 0 && checkAndSlash(deviation);
             }
         }
         super.onBlockInitialized(target);
@@ -156,17 +157,17 @@ contract Preemptivable is Absorbable {
      * opposition direction with the initiator's direction,
      * the initiator's deposited balance will be minus by slashed
      *
-     * slashed = MIN(PeA.Stake, MAX(1, -Diviation/PeA.Amount / PeA.SlashingDuration))
+     * slashed = MIN(PeA.Stake, MAX(1, -Deviation/PeA.Amount / PeA.SlashingPace))
      *
      * @return true if the lockdown is violated and get slashed
      */
-    function checkAndSlash(int diviation) internal returns (bool) {
-        if (!util.inOrder(lockdown.amount, 0, diviation)) {
+    function checkAndSlash(int deviation) internal returns (bool) {
+        if (!util.inOrder(lockdown.amount, 0, deviation)) {
             // same direction, no slashing
             return false;
         }
         // lockdown violated
-        uint slashed = uint(-diviation/lockdown.amount) / lockdown.slashingDuration;
+        uint slashed = uint(-deviation/lockdown.amount) / lockdown.slashingPace;
         if (slashed == 0) {
             slashed = 1; // minimum 1 wei
         }
@@ -191,7 +192,7 @@ contract Preemptivable is Absorbable {
         address maker,
         int amount,
         uint stake,
-        uint slashingDuration,
+        uint slashingPace,
         uint lockdownExpiration
     )
         internal
@@ -201,14 +202,14 @@ contract Preemptivable is Absorbable {
 
         absn.Proposal memory proposal;
 
-        if (slashingDuration > 0) {
+        if (slashingPace > 0) {
             require(
-                slashingDuration <=
-                globalSlashingDuration + globalSlashingDuration / PARAM_TOLERANCE,
+                slashingPace <=
+                globalSlashingPace + globalSlashingPace / PARAM_TOLERANCE,
                 "slashing duration param too long");
-            proposal.slashingDuration = slashingDuration;
+            proposal.slashingPace = slashingPace;
         } else {
-            proposal.slashingDuration = globalSlashingDuration;
+            proposal.slashingPace = globalSlashingPace;
         }
 
         if (lockdownExpiration > 0) {
@@ -231,7 +232,7 @@ contract Preemptivable is Absorbable {
             maker,
             amount,
             stake,
-            proposal.slashingDuration,
+            proposal.slashingPace,
             proposal.lockdownExpiration
         );
     }
@@ -273,7 +274,7 @@ contract Preemptivable is Absorbable {
     // adapt the global params to the last winning preemptive
     function adaptGlobalParams(absn.Proposal storage proposal, uint rank) internal {
         globalSuccessStake = util.avgCap(globalSuccessStake, proposal.stake);
-        globalSlashingDuration = util.avgCap(globalSlashingDuration, proposal.slashingDuration);
+        globalSlashingPace = util.avgCap(globalSlashingPace, proposal.slashingPace);
         globalLockdownExpiration = util.avgCap(globalLockdownExpiration, proposal.lockdownExpiration);
         globalSuccessRank = util.avgCap(globalSuccessRank, rank);
     }
@@ -283,12 +284,12 @@ contract Preemptivable is Absorbable {
         view
         returns(
             uint stake,
-            uint slashingDuration,
+            uint slashingPace,
             uint lockdownExpiration,
             uint rank
         )
     {
-        return (globalSuccessStake, globalSlashingDuration, globalLockdownExpiration, globalSuccessRank);
+        return (globalSuccessStake, globalSlashingPace, globalLockdownExpiration, globalSuccessRank);
     }
 
     // trigger an absorption from a maker's proposal
@@ -298,7 +299,7 @@ contract Preemptivable is Absorbable {
             proposal.maker,
             proposal.amount,
             proposal.stake,
-            proposal.slashingDuration,
+            proposal.slashingPace,
             block.number + proposal.lockdownExpiration
         );
         proposals.remove(proposal.maker);
@@ -308,7 +309,7 @@ contract Preemptivable is Absorbable {
         emit Preemptive(
             lockdown.maker,
             lockdown.stake,
-            lockdown.slashingDuration,
+            lockdown.slashingPace,
             lockdown.unlockNumber
         );
     }
@@ -375,12 +376,12 @@ contract Preemptivable is Absorbable {
             address maker,
             uint stake,
             int amount,
-            uint slashingDuration,
+            uint slashingPace,
             uint lockdownExpiration,
             uint number
         )
     {
         absn.Proposal storage p = proposals.get(idx);
-        return (p.maker, p.stake, p.amount, p.slashingDuration, p.lockdownExpiration, p.number);
+        return (p.maker, p.stake, p.amount, p.slashingPace, p.lockdownExpiration, p.number);
     }
 }

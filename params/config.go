@@ -83,7 +83,7 @@ var (
 		ByzantiumBlock:      big.NewInt(4),
 		ConstantinopleBlock: big.NewInt(15360000),
 		PetersburgBlock:     big.NewInt(15360000),
-		IstanbulBlock:       nil,
+		IstanbulBlock:       big.NewInt(25600000),
 		Dccs: &DccsConfig{
 			Period: BlockSeconds,
 			Epoch:  30000,
@@ -93,16 +93,18 @@ var (
 			ThangLongBlock:  big.NewInt(15360000),
 			ThangLongEpoch:  3000,
 			// CoLoa hard-fork
-			CoLoaBlock:              new(big.Int).SetUint64(math.MaxUint64),
+			CoLoaBlock:              big.NewInt(25600000),
 			LeakDuration:            1024,
 			ApplicationConfirmation: 128,
 			RandomSeedIteration:     20000000, // around 128 seconds
-			PriceSamplingDuration:   7 * 24 * 60 * 60 / BlockSeconds,
-			PriceSamplingInterval:   10 * 60 / BlockSeconds,
-			AbsorptionDuration:      7 * 24 * 60 * 60 / BlockSeconds / 2,
-			AbsorptionExpiration:    7 * 24 * 60 * 60 / BlockSeconds,
-			SlashingDuration:        7 * 24 * 60 * 60 / BlockSeconds / 2,
-			LockdownExpiration:      7 * 24 * 60 * 60 / BlockSeconds * 2,
+
+			PriceSamplingDuration: 7 * 24 * 60 * 60 / BlockSeconds,     // a week
+			PriceSamplingInterval: 10 * 60 / BlockSeconds,              // 10 minutes
+			AbsorptionDuration:    7 * 24 * 60 * 60 / BlockSeconds / 2, // half a week
+			AbsorptionExpiration:  7 * 24 * 60 * 60 / BlockSeconds,     // a week
+			LockdownExpiration:    7 * 24 * 60 * 60 / BlockSeconds * 2, // 2 weeks
+
+			SlashingPace: 7 * 24 * 60 / 10, // every 10 minutes for a week
 		},
 	}
 
@@ -158,7 +160,7 @@ var (
 			PriceSamplingInterval:   MainnetChainConfig.Dccs.PriceSamplingInterval / 4,
 			AbsorptionDuration:      MainnetChainConfig.Dccs.AbsorptionDuration / 4,
 			AbsorptionExpiration:    MainnetChainConfig.Dccs.AbsorptionExpiration / 4,
-			SlashingDuration:        MainnetChainConfig.Dccs.SlashingDuration / 4,
+			SlashingPace:            MainnetChainConfig.Dccs.SlashingPace / 4,
 			LockdownExpiration:      MainnetChainConfig.Dccs.LockdownExpiration / 4,
 		},
 	}
@@ -421,7 +423,7 @@ type DccsConfig struct {
 	PriceSamplingInterval   uint64   `json:"priceSamplingInterval"` // the largest prime number of blocks in 10 minutes
 	AbsorptionDuration      uint64   `json:"absorptionDuration"`    // each block can absorb a maximum of targetAbsorption/absorptionDuration (half a week)
 	AbsorptionExpiration    uint64   `json:"absorptionExpiration"`  // number of blocks that the absorption will be expired (a week)
-	SlashingDuration        uint64   `json:"slashingDuration"`      // each block can slash a maximum value of d/D/slashingDuration (half a week)
+	SlashingPace            uint64   `json:"slashingDuration"`      // each block can slash a maximum value of d/D/slashingDuration (half a week)
 	LockdownExpiration      uint64   `json:"lockdownExpiration"`    // number of blocks that the lockdown will be expired (2 weeks)
 }
 
@@ -466,7 +468,7 @@ func (c *DccsConfig) Snapshot(number uint64) uint64 {
 
 // String implements the stringer interface, returning the consensus engine details.
 func (c *DccsConfig) String() string {
-	return fmt.Sprintf("dccs {ThangLong: %v Epoch: %v CoLoa: %v LeakDuration: %v ApplicationConfirmation: %v RandomSeedIteration: %v PriceSamplingDuration: %v PriceSamplingInterval: %v AbsorptionDuration: %v AbsorptionExpiration: %v SlashingDuration: %v LockdownExpiration: %v}",
+	return fmt.Sprintf("dccs {ThangLong: %v Epoch: %v CoLoa: %v LeakDuration: %v ApplicationConfirmation: %v RandomSeedIteration: %v PriceSamplingDuration: %v PriceSamplingInterval: %v AbsorptionDuration: %v AbsorptionExpiration: %v SlashingPace: %v LockdownExpiration: %v}",
 		c.ThangLongBlock,
 		c.ThangLongEpoch,
 		c.CoLoaBlock,
@@ -477,7 +479,7 @@ func (c *DccsConfig) String() string {
 		c.PriceSamplingInterval,
 		c.AbsorptionDuration,
 		c.AbsorptionExpiration,
-		c.SlashingDuration,
+		c.SlashingPace,
 		c.LockdownExpiration,
 	)
 }

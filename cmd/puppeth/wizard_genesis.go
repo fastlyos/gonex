@@ -127,12 +127,13 @@ func (w *wizard) makeGenesis() {
 			LeakDuration:            1024,
 			ApplicationConfirmation: 128,
 			RandomSeedIteration:     20000000, // around 128 seconds
-			PriceSamplingDuration:   7 * 24 * 60 * 60 / 2,
-			PriceSamplingInterval:   10*60/2 - 7,
-			AbsorptionDuration:      7 * 24 * 60 * 60 / 2 / 2,
-			AbsorptionExpiration:    7 * 24 * 60 * 60 / 2,
-			SlashingDuration:        7 * 24 * 60 * 60 / 2 / 2,
-			LockdownExpiration:      7 * 24 * 60 * 60 / 2 * 2,
+
+			PriceSamplingDuration: params.MainnetChainConfig.Dccs.PriceSamplingDuration,
+			PriceSamplingInterval: params.MainnetChainConfig.Dccs.PriceSamplingInterval,
+			AbsorptionDuration:    params.MainnetChainConfig.Dccs.AbsorptionDuration,
+			AbsorptionExpiration:  params.MainnetChainConfig.Dccs.AbsorptionExpiration,
+			LockdownExpiration:    params.MainnetChainConfig.Dccs.LockdownExpiration,
+			SlashingPace:          params.MainnetChainConfig.Dccs.SlashingPace,
 		}
 		fmt.Println()
 		fmt.Println("How many seconds should blocks take? (default = 2)")
@@ -213,6 +214,7 @@ func (w *wizard) makeGenesis() {
 		fmt.Println()
 		fmt.Printf("Which block should CoLoa come into effect? (default = %v)\n", genesis.Config.Dccs.CoLoaBlock)
 		genesis.Config.Dccs.CoLoaBlock = w.readDefaultBigInt(genesis.Config.Dccs.CoLoaBlock)
+		genesis.Config.IstanbulBlock = genesis.Config.Dccs.CoLoaBlock
 
 		fmt.Println()
 		fmt.Printf("After how many block of inactivity should a sealer is kicked out? (default = %v)\n", genesis.Config.Dccs.LeakDuration)
@@ -227,28 +229,19 @@ func (w *wizard) makeGenesis() {
 		genesis.Config.Dccs.RandomSeedIteration = uint64(w.readDefaultInt(int(genesis.Config.Dccs.RandomSeedIteration)))
 
 		fmt.Println()
-		fmt.Printf("How long should the price be sampled for supply absorption? (default = %v)\n", genesis.Config.Dccs.PriceSamplingDuration)
-		genesis.Config.Dccs.PriceSamplingDuration = uint64(w.readDefaultInt(int(genesis.Config.Dccs.PriceSamplingDuration)))
-
-		fmt.Println()
 		fmt.Printf("How often should the price be sampled for supply absorption? (default = %v)\n", genesis.Config.Dccs.PriceSamplingInterval)
 		genesis.Config.Dccs.PriceSamplingInterval = uint64(w.readDefaultInt(int(genesis.Config.Dccs.PriceSamplingInterval)))
 
 		fmt.Println()
-		fmt.Printf("How quick should an absorption take? (default = %v)\n", genesis.Config.Dccs.AbsorptionDuration)
-		genesis.Config.Dccs.AbsorptionDuration = uint64(w.readDefaultInt(int(genesis.Config.Dccs.AbsorptionDuration)))
+		fmt.Printf("Price and absorption rate? (default = %v)\n", 1)
+		rate := uint64(w.readDefaultFloat(1))
 
-		fmt.Println()
-		fmt.Printf("How long should an absorption expire? (default = %v)\n", genesis.Config.Dccs.AbsorptionExpiration)
-		genesis.Config.Dccs.AbsorptionExpiration = uint64(w.readDefaultInt(int(genesis.Config.Dccs.AbsorptionExpiration)))
+		genesis.Config.Dccs.PriceSamplingDuration = uint64(params.MainnetChainConfig.Dccs.PriceSamplingDuration / rate)
+		genesis.Config.Dccs.AbsorptionDuration = uint64(params.MainnetChainConfig.Dccs.AbsorptionDuration / rate)
+		genesis.Config.Dccs.AbsorptionExpiration = uint64(params.MainnetChainConfig.Dccs.AbsorptionExpiration / rate)
+		genesis.Config.Dccs.LockdownExpiration = uint64(params.MainnetChainConfig.Dccs.LockdownExpiration / rate)
 
-		fmt.Println()
-		fmt.Printf("How quick should a violated initiator is slashed? (default = %v)\n", genesis.Config.Dccs.SlashingDuration)
-		genesis.Config.Dccs.SlashingDuration = uint64(w.readDefaultInt(int(genesis.Config.Dccs.SlashingDuration)))
-
-		fmt.Println()
-		fmt.Printf("How long should a lockdown expire? (default = %v)\n", genesis.Config.Dccs.LockdownExpiration)
-		genesis.Config.Dccs.LockdownExpiration = uint64(w.readDefaultInt(int(genesis.Config.Dccs.LockdownExpiration)))
+		genesis.Config.Dccs.SlashingPace = uint64(params.MainnetChainConfig.Dccs.SlashingPace * params.MainnetChainConfig.Dccs.PriceSamplingInterval / genesis.Config.Dccs.PriceSamplingInterval / rate)
 
 	default:
 		log.Crit("Invalid consensus engine choice", "choice", choice)

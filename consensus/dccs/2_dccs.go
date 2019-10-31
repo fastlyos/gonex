@@ -663,7 +663,7 @@ func deployCoLoaContracts(chain consensus.ChainReader, header *types.Header, sta
 			address, _, _, err := endurio.DeploySeigniorage(auth, sim,
 				new(big.Int).SetUint64(chain.Config().Dccs.AbsorptionDuration),
 				new(big.Int).SetUint64(chain.Config().Dccs.AbsorptionExpiration),
-				new(big.Int).SetUint64(chain.Config().Dccs.SlashingDuration),
+				new(big.Int).SetUint64(chain.Config().Dccs.SlashingPace),
 				new(big.Int).SetUint64(chain.Config().Dccs.LockdownExpiration),
 			)
 			return address, err
