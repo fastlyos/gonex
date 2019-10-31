@@ -129,15 +129,12 @@ contract Preemptivable is Absorbable {
         }
         checkAndTriggerPreemptive();
 
-        if (target > 0) { // absorption block
-            if (lockdown.isLocked()) {
-                // WIP: slash the pre-emptive maker if target goes wrong way
+        if (target > 0) { // price block
+            if (lockdown.isLocked() && last.isPreemptive) {
                 uint supply = StablizeToken.totalSupply();
                 int diviation = util.sub(target, supply);
-                if (checkAndSlash(diviation) && last.isPreemptive) {
-                    // lockdown violation, halt the preemptive absorption for this block
-                    return;
-                }
+                // halt the PeA if lockdown is violated
+                last.isHalted = diviation != 0 && checkAndSlash(diviation);
             }
         }
         super.onBlockInitialized(target);
