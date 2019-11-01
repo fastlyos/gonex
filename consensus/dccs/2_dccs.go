@@ -371,35 +371,6 @@ func (c *Context) getChainRandomSeed(parent *types.Header) (RandomData, error) {
 	return c.getRandomData(seedHeader)
 }
 
-func (c *Context) getLinkDest(header *types.Header) *types.Header {
-	if header.MixDigest == (common.Hash{}) {
-		// hardfork block is linked to itself
-		return header
-	}
-	return c.getHeaderByHash(header.MixDigest)
-}
-
-func (c *Context) getAnchorDest(header *types.Header) (*types.Header, error) {
-	linkHeader := header
-	if !hasAnchorData(header) {
-		linkHeader = c.getLinkDest(header)
-	}
-	anchorData, err := c.getAnchorData(linkHeader)
-	if err != nil {
-		return nil, err
-	}
-	if anchorData == nil {
-		// should never happen
-		log.Error("getAnchorHeader returns nil", "number", header.Number)
-		return nil, errors.New("getAnchorHeader returns nil")
-	}
-	if anchorData.destHash == (common.Hash{}) {
-		// hardfork block is anchored to itself
-		return linkHeader, nil
-	}
-	return c.getHeaderByHash(anchorData.destHash), nil
-}
-
 // prepareBeneficiary2 gets the beneficiary of signer from smart contract and
 // set to header's coinbase to give sealing reward later.
 // + check the contract of current state first
