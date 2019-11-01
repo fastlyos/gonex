@@ -22,6 +22,7 @@ import (
 	"errors"
 	"math/big"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -304,15 +305,18 @@ func (c *Context) getSealingQueue(parentHash common.Hash) (*SealingQueue, error)
 	if err != nil {
 		return nil, err
 	}
+	var b strings.Builder
 	for _, app := range apps {
 		if app.isJoined() {
-			log.Trace("Sealer application", "address", app.sealer, "joined", app.isJoined())
 			addActive(app.sealer)
+			b.WriteRune('+')
 		} else {
-			log.Error("Sealer application", "address", app.sealer, "joined", app.isJoined())
 			remActive(app.sealer)
+			b.WriteRune('-')
 		}
+		b.WriteString(common.Bytes2Hex(app.sealer.Bytes()[:4]))
 	}
+	log.Trace("Sealer applications", "apps", b.String())
 
 	// truncate the extra recents
 	for i := len(queue.active) * 2 / 3; i < len(recents); i++ {
