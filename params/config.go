@@ -103,8 +103,7 @@ var (
 			AbsorptionDuration:    7 * 24 * 60 * 60 / BlockSeconds / 2, // half a week
 			AbsorptionExpiration:  7 * 24 * 60 * 60 / BlockSeconds,     // a week
 			LockdownExpiration:    7 * 24 * 60 * 60 / BlockSeconds * 2, // 2 weeks
-
-			SlashingPace: 7 * 24 * 60 / 10, // every 10 minutes for a week
+			SlashingRate:          1000,
 		},
 	}
 
@@ -160,8 +159,8 @@ var (
 			PriceSamplingInterval:   MainnetChainConfig.Dccs.PriceSamplingInterval / 4,
 			AbsorptionDuration:      MainnetChainConfig.Dccs.AbsorptionDuration / 4,
 			AbsorptionExpiration:    MainnetChainConfig.Dccs.AbsorptionExpiration / 4,
-			SlashingPace:            MainnetChainConfig.Dccs.SlashingPace / 4,
 			LockdownExpiration:      MainnetChainConfig.Dccs.LockdownExpiration / 4,
+			SlashingRate:            MainnetChainConfig.Dccs.SlashingRate,
 		},
 	}
 
@@ -423,7 +422,7 @@ type DccsConfig struct {
 	PriceSamplingInterval   uint64   `json:"priceSamplingInterval"` // the largest prime number of blocks in 10 minutes
 	AbsorptionDuration      uint64   `json:"absorptionDuration"`    // each block can absorb a maximum of targetAbsorption/absorptionDuration (half a week)
 	AbsorptionExpiration    uint64   `json:"absorptionExpiration"`  // number of blocks that the absorption will be expired (a week)
-	SlashingPace            uint64   `json:"slashingDuration"`      // each block can slash a maximum value of d/D/slashingDuration (half a week)
+	SlashingRate            uint64   `json:"slashingRate"`          // slashing rate
 	LockdownExpiration      uint64   `json:"lockdownExpiration"`    // number of blocks that the lockdown will be expired (2 weeks)
 }
 
@@ -468,7 +467,7 @@ func (c *DccsConfig) Snapshot(number uint64) uint64 {
 
 // String implements the stringer interface, returning the consensus engine details.
 func (c *DccsConfig) String() string {
-	return fmt.Sprintf("dccs {ThangLong: %v Epoch: %v CoLoa: %v LeakDuration: %v ApplicationConfirmation: %v RandomSeedIteration: %v PriceSamplingDuration: %v PriceSamplingInterval: %v AbsorptionDuration: %v AbsorptionExpiration: %v SlashingPace: %v LockdownExpiration: %v}",
+	return fmt.Sprintf("dccs {ThangLong: %v Epoch: %v CoLoa: %v LeakDuration: %v ApplicationConfirmation: %v RandomSeedIteration: %v PriceSamplingDuration: %v PriceSamplingInterval: %v AbsorptionDuration: %v AbsorptionExpiration: %v SlashingRate: %v LockdownExpiration: %v}",
 		c.ThangLongBlock,
 		c.ThangLongEpoch,
 		c.CoLoaBlock,
@@ -479,7 +478,7 @@ func (c *DccsConfig) String() string {
 		c.PriceSamplingInterval,
 		c.AbsorptionDuration,
 		c.AbsorptionExpiration,
-		c.SlashingPace,
+		c.SlashingRate,
 		c.LockdownExpiration,
 	)
 }

@@ -133,7 +133,7 @@ func (w *wizard) makeGenesis() {
 			AbsorptionDuration:    params.MainnetChainConfig.Dccs.AbsorptionDuration,
 			AbsorptionExpiration:  params.MainnetChainConfig.Dccs.AbsorptionExpiration,
 			LockdownExpiration:    params.MainnetChainConfig.Dccs.LockdownExpiration,
-			SlashingPace:          params.MainnetChainConfig.Dccs.SlashingPace,
+			SlashingRate:          params.MainnetChainConfig.Dccs.SlashingRate,
 		}
 		fmt.Println()
 		fmt.Println("How many seconds should blocks take? (default = 2)")
@@ -241,7 +241,7 @@ func (w *wizard) makeGenesis() {
 		genesis.Config.Dccs.AbsorptionExpiration = uint64(params.MainnetChainConfig.Dccs.AbsorptionExpiration / rate)
 		genesis.Config.Dccs.LockdownExpiration = uint64(params.MainnetChainConfig.Dccs.LockdownExpiration / rate)
 
-		genesis.Config.Dccs.SlashingPace = uint64(params.MainnetChainConfig.Dccs.SlashingPace * params.MainnetChainConfig.Dccs.PriceSamplingInterval / genesis.Config.Dccs.PriceSamplingInterval / rate)
+		genesis.Config.Dccs.SlashingRate = uint64(params.MainnetChainConfig.Dccs.SlashingRate)
 
 	default:
 		log.Crit("Invalid consensus engine choice", "choice", choice)
