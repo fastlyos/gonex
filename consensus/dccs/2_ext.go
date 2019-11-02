@@ -261,8 +261,7 @@ func (c *Context) assembleAnchorExtra(parent *types.Header) ([]byte, error) {
 		return ext.toExtra(), nil
 	}
 
-	linkHeader := c.getLinkDest(parent)
-	anchorHeader, err := c.getAnchorDest(linkHeader)
+	anchorHeader, err := c.getAnchorDest(parent)
 	if err != nil {
 		return nil, err
 	}
@@ -279,7 +278,6 @@ func (c *Context) assembleAnchorExtra(parent *types.Header) ([]byte, error) {
 	}
 	// parent block has sealer application tx(s)
 	if len(apps) > 0 {
-		log.Info("sealers", "applications", apps)
 		anchorData.applications = apps
 		newAnchor = true
 	}
@@ -293,6 +291,7 @@ func (c *Context) assembleAnchorExtra(parent *types.Header) ([]byte, error) {
 	if broken {
 		log.Info("Anchor continuity is broken", "anchor ratio", anchorRatio.RatString(), "anchor number", anchorHeader.Number)
 		// anchor continuity is broken, compare the current link to anchor
+		linkHeader := c.getLinkDest(parent)
 		linkQueue, err := c.getSealingQueue(linkHeader.ParentHash)
 		if err != nil {
 			return nil, err
@@ -319,6 +318,35 @@ func (c *Context) assembleAnchorExtra(parent *types.Header) ([]byte, error) {
 	anchorExtra := anchorData.toExtra()
 	c.engine.anchorExtraCache.Add(parentHash, anchorExtra)
 	return anchorExtra, nil
+}
+
+func (c *Context) getLinkDest(header *types.Header) *types.Header {
+	if header.MixDigest == (common.Hash{}) {
+		// hardfork block is linked to itself
+		return header
+	}
+	return c.getHeaderByHash(header.MixDigest)
+}
+
+func (c *Context) getAnchorDest(header *types.Header) (*types.Header, error) {
+	linkHeader := header
+	if !hasAnchorData(header) {
+		linkHeader = c.getLinkDest(header)
+	}
+	anchorData, err := c.getAnchorData(linkHeader)
+	if err != nil {
+		return nil, err
+	}
+	if anchorData == nil {
+		// should never happen
+		log.Error("getAnchorHeader returns nil", "number", header.Number)
+		return nil, errors.New("getAnchorHeader returns nil")
+	}
+	if anchorData.destHash == (common.Hash{}) {
+		// hardfork block is anchored to itself
+		return linkHeader, nil
+	}
+	return c.getHeaderByHash(anchorData.destHash), nil
 }
 
 func (c *Context) getPrice(header *types.Header) (*Price, error) {

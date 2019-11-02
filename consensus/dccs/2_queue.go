@@ -22,6 +22,7 @@ import (
 	"errors"
 	"math/big"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -232,8 +233,6 @@ func (c *Context) getSealingQueue(parentHash common.Hash) (*SealingQueue, error)
 		recent: map[common.Address]struct{}{},
 	}
 
-	number := parent.Number.Uint64()
-
 	// temporary queue for recents
 	var recents []common.Address
 
@@ -254,26 +253,15 @@ func (c *Context) getSealingQueue(parentHash common.Hash) (*SealingQueue, error)
 		}
 	}
 
-	var maxDiff uint64
-	hash := parentHash
-
-	// scan backward atmost LeakDurations blocks from number
-	for i := uint64(0); i < c.engine.config.LeakDuration; i++ {
-		if number <= i {
-			break // stop at the genesis block
-		}
-
-		// OPTIMIZATION: for non-leakage case
-		// correct if there's at least one in-turn block in the last 16 blocks
-		const minBlockToScan = 16
-		if i > minBlockToScan && len(queue.active) >= int(maxDiff) {
-			break // all active sealers has probably been collected
-		}
-		// END OF OPTIMIZATION
-
-		// TODO: optimization for leakage case
-
-		n := number - i
+	maxDiff := parent.Difficulty.Uint64()
+	n := parent.Number.Uint64()
+	startLimit := n - c.engine.config.LeakDuration
+	if startLimit > n { // overflown
+		startLimit = 0
+	}
+	// scan backward from parent number for recents and difficulty
+	// somewhat probabilistically optimized, fairly safe nonetheless
+	for hash := parentHash; uint64(len(recents)) < maxDiff*2/3 && n > startLimit; n-- {
 		header := c.getHeader(hash, n)
 		if header == nil {
 			log.Error("Header not found", "number", n, "hash", hash, "len(parents)", len(c.parents))
@@ -285,34 +273,50 @@ func (c *Context) getSealingQueue(parentHash common.Hash) (*SealingQueue, error)
 		}
 
 		addActive(sealer)
+		addRecent(sealer)
 
 		// use the difficulty for total number of recently active sealer count
 		diff := header.Difficulty.Uint64()
 		if diff > maxDiff {
 			maxDiff = diff
 		}
-		// somewhat probabilistically optimized, fairly safe nonetheless
-		if i < minBlockToScan || len(recents) < int(maxDiff*2/3) {
-			addRecent(sealer)
-		}
 
 		// next parent in the hash chain
 		hash = header.ParentHash
+	}
+
+	// scan forward to collect the rest of the sealers
+	endLimit := n
+	for n := startLimit + 1; uint64(len(queue.active)) < maxDiff && n < endLimit; n++ {
+		header := c.getHeaderByNumber(n)
+		if header == nil {
+			log.Error("Header not found", "number", n, "len(parents)", len(c.parents))
+			return nil, errUnknownBlock
+		}
+		sealer, err := c.ecrecover(header)
+		if err != nil {
+			return nil, err
+		}
+
+		addActive(sealer)
 	}
 
 	apps, err := c.crawlSealerApplications(parent)
 	if err != nil {
 		return nil, err
 	}
+	var b strings.Builder
 	for _, app := range apps {
 		if app.isJoined() {
-			log.Trace("Sealer application", "address", app.sealer, "joined", app.isJoined())
 			addActive(app.sealer)
+			b.WriteRune('+')
 		} else {
-			log.Error("Sealer application", "address", app.sealer, "joined", app.isJoined())
 			remActive(app.sealer)
+			b.WriteRune('-')
 		}
+		b.WriteString(common.Bytes2Hex(app.sealer.Bytes()[:4]))
 	}
+	log.Trace("Sealer applications", "apps", b.String())
 
 	// truncate the extra recents
 	for i := len(queue.active) * 2 / 3; i < len(recents); i++ {
@@ -329,7 +333,6 @@ func (c *Context) crawlSealerApplications(header *types.Header) ([]SealerApplica
 	number := header.Number.Uint64()
 	apps := []SealerApplication{}
 	for header := c.getHeaderByHash(header.MixDigest); header != nil; header = c.getHeaderByHash(header.MixDigest) {
-		log.Trace("crawling", "appNumber", header.Number, "appNumber.Hash", header.Hash(), "cross-link", header.MixDigest)
 		if (header.MixDigest == common.Hash{}) {
 			// reach the CoLoa hardfork (new genesis)
 			break

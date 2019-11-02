@@ -59,6 +59,7 @@ var (
 	errInvalidExtendedData       = errors.New("Extended data does not matches")
 	errInvalidRandomData         = errors.New("Invalid random data in extra data")
 	errInvalidRandomDataSize     = errors.New("Invalid random data size from relayer")
+	errRandomSeedHeaderMissing   = errors.New("Random seed header missing")
 
 	errInvalidPriceData  = errors.New("price block contains invalid price value")
 	errUnexpectPriceData = errors.New("non-price block contains price value")
@@ -138,8 +139,16 @@ func (c *Context) verifyHeader2() error {
 	if err := misc.VerifyForkHashes(c.chain.Config(), header, false); err != nil {
 		return err
 	}
+
 	// All basic checks passed, verify cascading fields
-	return c.verifyCascadingFields2()
+	err := c.verifyCascadingFields2()
+
+	// Ignore missing random seed error while fast sync until the next random output available
+	if len(c.parents) > 0 && err == errRandomSeedHeaderMissing {
+		log.Warn("☢ Random seed header missing, continue at your own risk")
+		return nil
+	}
+	return err
 }
 
 func (c *Context) getBlockNonce(parent *types.Header) types.BlockNonce {
@@ -203,7 +212,11 @@ func (c *Context) verifyCascadingFields2() error {
 			return errInvalidRandomDataSize
 		}
 		// Verify VDF ouput here
-		input := c.getChainRandomInput(parent)
+		seedHeader := c.getChainRandomHeader(parent)
+		if seedHeader == nil {
+			return errRandomSeedHeaderMissing
+		}
+		input := seedHeader.Hash()
 		if !c.engine.queueShuffler.Verify(input[:], randomData, c.engine.config.RandomSeedIteration) {
 			return errInvalidRandomData
 		}
@@ -353,13 +366,11 @@ func (c *Context) getChainRandomHeader(parent *types.Header) *types.Header {
 	return parent
 }
 
-func (c *Context) getChainRandomInput(parent *types.Header) common.Hash {
-	seedHeader := c.getChainRandomHeader(parent)
-	return seedHeader.Hash()
-}
-
 func (c *Context) getChainRandomSeed(parent *types.Header) (RandomData, error) {
 	seedHeader := c.getChainRandomHeader(parent)
+	if seedHeader == nil {
+		return nil, errRandomSeedHeaderMissing
+	}
 	if c.engine.config.CoLoaBlock.Cmp(seedHeader.Number) == 0 {
 		// use the sealer digest for hardfork block
 		anchorData, err := c.getAnchorData(seedHeader)
@@ -369,35 +380,6 @@ func (c *Context) getChainRandomSeed(parent *types.Header) (RandomData, error) {
 		return anchorData.sealersDigest[:], nil
 	}
 	return c.getRandomData(seedHeader)
-}
-
-func (c *Context) getLinkDest(header *types.Header) *types.Header {
-	if header.MixDigest == (common.Hash{}) {
-		// hardfork block is linked to itself
-		return header
-	}
-	return c.getHeaderByHash(header.MixDigest)
-}
-
-func (c *Context) getAnchorDest(header *types.Header) (*types.Header, error) {
-	linkHeader := header
-	if !hasAnchorData(header) {
-		linkHeader = c.getLinkDest(header)
-	}
-	anchorData, err := c.getAnchorData(linkHeader)
-	if err != nil {
-		return nil, err
-	}
-	if anchorData == nil {
-		// should never happen
-		log.Error("getAnchorHeader returns nil", "number", header.Number)
-		return nil, errors.New("getAnchorHeader returns nil")
-	}
-	if anchorData.destHash == (common.Hash{}) {
-		// hardfork block is anchored to itself
-		return linkHeader, nil
-	}
-	return c.getHeaderByHash(anchorData.destHash), nil
 }
 
 // prepareBeneficiary2 gets the beneficiary of signer from smart contract and
@@ -461,7 +443,12 @@ func (c *Context) prepare2(header *types.Header) error {
 	} else {
 		// request the first VDF task after the node started
 		c.engine.queueShufflerOnce.Do(func() {
-			input := c.getChainRandomInput(parent)
+			seedHeader := c.getChainRandomHeader(parent)
+			if seedHeader == nil {
+				log.Error("Failed to request the first VDF task", "err", errRandomSeedHeaderMissing)
+				return
+			}
+			input := seedHeader.Hash()
 			log.Info("First request for random seed", "input", common.Bytes2Hex(input[:]))
 			c.engine.queueShuffler.Request(input[:], c.engine.config.RandomSeedIteration)
 		})
@@ -495,7 +482,11 @@ func (c *Context) prepare2(header *types.Header) error {
 		return err
 	}
 
-	input := c.getChainRandomInput(parent)
+	seedHeader := c.getChainRandomHeader(parent)
+	if seedHeader == nil {
+		return errRandomSeedHeaderMissing
+	}
+	input := seedHeader.Hash()
 	randomData := RandomData(c.engine.queueShuffler.Peek(input[:], c.engine.config.RandomSeedIteration))
 	if len(randomData) > 0 {
 		log.Trace("prepare2", "vdfOutput", common.Bytes2Hex(randomData))
