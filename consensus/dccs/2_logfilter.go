@@ -102,10 +102,10 @@ func (c *Context) fetchSealerApplications(header *types.Header) ([]SealerApplica
 		if l.Topics[0] == joinedTopic {
 			staker := common.BytesToAddress(l.Data[:32])
 			applications[i].action = ExtendedDataTypeSealerJoin
-			log.Trace("Sealer joined", "sealer", sealer, "coinbase", staker)
+			log.Info("Sealer application", "join", sealer, "coinbase", staker)
 		} else {
 			applications[i].action = ExtendedDataTypeSealerLeave
-			log.Trace("Sealer left", "sealer", sealer)
+			log.Info("Sealer application", "leave", sealer)
 		}
 	}
 	return applications, nil

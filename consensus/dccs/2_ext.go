@@ -278,7 +278,6 @@ func (c *Context) assembleAnchorExtra(parent *types.Header) ([]byte, error) {
 	}
 	// parent block has sealer application tx(s)
 	if len(apps) > 0 {
-		log.Info("sealers", "applications", apps)
 		anchorData.applications = apps
 		newAnchor = true
 	}
