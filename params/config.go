@@ -19,7 +19,6 @@ package params
 import (
 	"encoding/binary"
 	"fmt"
-	"math"
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -141,7 +140,7 @@ var (
 		ByzantiumBlock:      big.NewInt(4),
 		ConstantinopleBlock: big.NewInt(300000),
 		PetersburgBlock:     big.NewInt(300000),
-		IstanbulBlock:       nil,
+		IstanbulBlock:       big.NewInt(4295000),
 		Dccs: &DccsConfig{
 			Period: 2,
 			Epoch:  30000,
@@ -151,15 +150,15 @@ var (
 			ThangLongBlock:  big.NewInt(300000),
 			ThangLongEpoch:  300,
 			// CoLoa hard-fork
-			CoLoaBlock:              new(big.Int).SetUint64(math.MaxUint64),
-			LeakDuration:            MainnetChainConfig.Dccs.LeakDuration / 4,
-			ApplicationConfirmation: MainnetChainConfig.Dccs.ApplicationConfirmation / 4,
-			RandomSeedIteration:     MainnetChainConfig.Dccs.RandomSeedIteration / 4,
-			PriceSamplingDuration:   MainnetChainConfig.Dccs.PriceSamplingDuration / 4,
-			PriceSamplingInterval:   MainnetChainConfig.Dccs.PriceSamplingInterval / 4,
-			AbsorptionDuration:      MainnetChainConfig.Dccs.AbsorptionDuration / 4,
-			AbsorptionExpiration:    MainnetChainConfig.Dccs.AbsorptionExpiration / 4,
-			LockdownExpiration:      MainnetChainConfig.Dccs.LockdownExpiration / 4,
+			CoLoaBlock:              big.NewInt(4295000),
+			LeakDuration:            MainnetChainConfig.Dccs.LeakDuration / 100,
+			ApplicationConfirmation: MainnetChainConfig.Dccs.ApplicationConfirmation / 100,
+			RandomSeedIteration:     MainnetChainConfig.Dccs.RandomSeedIteration / 100,
+			PriceSamplingDuration:   MainnetChainConfig.Dccs.PriceSamplingDuration / 100,
+			PriceSamplingInterval:   MainnetChainConfig.Dccs.PriceSamplingInterval / 100,
+			AbsorptionDuration:      MainnetChainConfig.Dccs.AbsorptionDuration / 100,
+			AbsorptionExpiration:    MainnetChainConfig.Dccs.AbsorptionExpiration / 100,
+			LockdownExpiration:      MainnetChainConfig.Dccs.LockdownExpiration / 100,
 			SlashingRate:            MainnetChainConfig.Dccs.SlashingRate,
 		},
 	}
