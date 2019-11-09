@@ -55,6 +55,7 @@ func (w *wizard) makeGenesis() {
 			ByzantiumBlock:      big.NewInt(0),
 			ConstantinopleBlock: big.NewInt(0),
 			PetersburgBlock:     big.NewInt(0),
+			IstanbulBlock:       big.NewInt(0),
 		},
 	}
 	// Figure out which consensus engine to choose
@@ -378,6 +379,10 @@ func (w *wizard) manageGenesis() {
 			w.conf.Genesis.Config.Dccs.ThangLongBlock = w.readDefaultBigInt(w.conf.Genesis.Config.Dccs.ThangLongBlock)
 		}
 
+		fmt.Println()
+		fmt.Printf("Which block should Istanbul come into effect? (default = %v)\n", w.conf.Genesis.Config.IstanbulBlock)
+		w.conf.Genesis.Config.IstanbulBlock = w.readDefaultBigInt(w.conf.Genesis.Config.IstanbulBlock)
+
 		out, _ := json.MarshalIndent(w.conf.Genesis.Config, "", "  ")
 		fmt.Printf("Chain configuration updated:\n\n%s\n", out)
 
@@ -416,7 +421,7 @@ func (w *wizard) manageGenesis() {
 		} else {
 			saveGenesis(folder, w.network, "parity", spec)
 		}
-		// Export the genesis spec used by Harmony (formerly EthereumJ
+		// Export the genesis spec used by Harmony (formerly EthereumJ)
 		saveGenesis(folder, w.network, "harmony", w.conf.Genesis)
 
 	case "3":
@@ -439,7 +444,7 @@ func (w *wizard) manageGenesis() {
 func saveGenesis(folder, network, client string, spec interface{}) {
 	path := filepath.Join(folder, fmt.Sprintf("%s-%s.json", network, client))
 
-	out, _ := json.Marshal(spec)
+	out, _ := json.MarshalIndent(spec, "", "  ")
 	if err := ioutil.WriteFile(path, out, 0644); err != nil {
 		log.Error("Failed to save genesis file", "client", client, "err", err)
 		return
