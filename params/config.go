@@ -151,15 +151,16 @@ var (
 			ThangLongEpoch:  300,
 			// CoLoa hard-fork
 			CoLoaBlock:              big.NewInt(4295000),
-			LeakDuration:            MainnetChainConfig.Dccs.LeakDuration / 100,
-			ApplicationConfirmation: MainnetChainConfig.Dccs.ApplicationConfirmation / 100,
-			RandomSeedIteration:     MainnetChainConfig.Dccs.RandomSeedIteration / 100,
-			PriceSamplingDuration:   MainnetChainConfig.Dccs.PriceSamplingDuration / 100,
-			PriceSamplingInterval:   MainnetChainConfig.Dccs.PriceSamplingInterval / 100,
-			AbsorptionDuration:      MainnetChainConfig.Dccs.AbsorptionDuration / 100,
-			AbsorptionExpiration:    MainnetChainConfig.Dccs.AbsorptionExpiration / 100,
-			LockdownExpiration:      MainnetChainConfig.Dccs.LockdownExpiration / 100,
-			SlashingRate:            MainnetChainConfig.Dccs.SlashingRate,
+			LeakDuration:            MainnetChainConfig.Dccs.LeakDuration / 10,
+			ApplicationConfirmation: MainnetChainConfig.Dccs.ApplicationConfirmation / 10,
+			RandomSeedIteration:     MainnetChainConfig.Dccs.RandomSeedIteration / 10,
+
+			PriceSamplingDuration: MainnetChainConfig.Dccs.PriceSamplingDuration / 100,
+			PriceSamplingInterval: MainnetChainConfig.Dccs.PriceSamplingInterval / 100,
+			AbsorptionDuration:    MainnetChainConfig.Dccs.AbsorptionDuration / 100,
+			AbsorptionExpiration:  MainnetChainConfig.Dccs.AbsorptionExpiration / 100,
+			LockdownExpiration:    MainnetChainConfig.Dccs.LockdownExpiration / 100,
+			SlashingRate:          MainnetChainConfig.Dccs.SlashingRate,
 		},
 	}
 
