@@ -28,6 +28,7 @@ var MainnetBootnodes = []string{
 // TestnetBootnodes are the enode URLs of the P2P bootstrap nodes running on the
 // Dccs test network.
 var TestnetBootnodes = []string{
+	"enode://baadca56fc908b01e77e66170090435c49115efb488b1e28b53502b0f484bd1351c481027e40910df2fa860a45cdfff64c7f0b20d8d8086bde5cfd3816cab74e@144.91.83.223:30301",
 	"enode://ee47802e44de30d3073e4646657bb9367611235546faa11fd40a6ed2983e3a40983e035d66d84a1525726e329da9eac4dd139a009fd8dec27b98f58bd6985528@108.61.148.72:30301",
 	"enode://5deadedcda84af8f40b9fdea66d93d56d408ab674e0c4939bdd26750b1820bdd78bbac7cd5de9e7a44c609d7be7c1cb08842d5adc3df7fc3bbcf3fda9c378ffd@199.247.15.240:30301",
 	"enode://f8572a8177f20972139ada1d41344ff62481fbde6abbf6cb2ffcde42139eb9c67248dd3bd45c5672238de41b2ff8fbf746bb6ebe46a6d3e6a5a83fcebb0fb797@45.77.22.149:30301",
