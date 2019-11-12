@@ -571,7 +571,7 @@ func (c *ChainConfig) IsThangLongPreparationBlock(num *big.Int) bool {
 
 // IsSnapshotBlock returns whether num represents a block number exactly at the snapshot block of an epoch.
 func (c *ChainConfig) IsSnapshotBlock(num *big.Int) bool {
-	if c.Dccs == nil || c.Dccs.ThangLongBlock == nil || c.IsCoLoa(num) {
+	if c.Dccs == nil || c.Dccs.ThangLongBlock == nil {
 		return false
 	}
 	forBlock := new(big.Int).SetUint64(CanonicalDepth)
