@@ -626,7 +626,8 @@ func (n *Node) OpenDatabaseWithFreezer(name string, cache, handles int, freezer,
 
 	switch {
 	case freezer == "":
-		freezer = filepath.Join(root, "ancient")
+		// freezer = filepath.Join(root, "ancient")
+		return rawdb.NewLevelDBDatabase(root, cache, handles, namespace)
 	case !filepath.IsAbs(freezer):
 		freezer = n.config.ResolvePath(freezer)
 	}
