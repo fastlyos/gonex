@@ -931,14 +931,21 @@ func (bc *BlockChain) Rollback(chain []common.Hash) {
 			headBlockGauge.Update(int64(newBlock.NumberU64()))
 		}
 	}
-	// Truncate ancient data which exceeds the current header.
-	//
-	// Notably, it can happen that system crashes without truncating the ancient data
-	// but the head indicator has been updated in the active store. Regarding this issue,
-	// system will self recovery by truncating the extra data during the setup phase.
-	if err := bc.truncateAncient(bc.hc.CurrentHeader().Number.Uint64()); err != nil {
-		log.Crit("Truncate ancient store failed", "err", err)
+	if bc.hasFreezer() {
+		// Truncate ancient data which exceeds the current header.
+		//
+		// Notably, it can happen that system crashes without truncating the ancient data
+		// but the head indicator has been updated in the active store. Regarding this issue,
+		// system will self recovery by truncating the extra data during the setup phase.
+		if err := bc.truncateAncient(bc.hc.CurrentHeader().Number.Uint64()); err != nil {
+			log.Crit("Truncate ancient store failed", "err", err)
+		}
 	}
+}
+
+func (bc *BlockChain) hasFreezer() bool {
+	_, err := bc.db.Ancients()
+	return err == nil
 }
 
 // truncateAncient rewinds the blockchain to the specified header and deletes all
@@ -1001,7 +1008,7 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 					blockChain[i-1].Hash().Bytes()[:4], i, blockChain[i].NumberU64(), blockChain[i].Hash().Bytes()[:4], blockChain[i].ParentHash().Bytes()[:4])
 			}
 		}
-		if blockChain[i].NumberU64() <= ancientLimit {
+		if bc.hasFreezer() && blockChain[i].NumberU64() <= ancientLimit {
 			ancientBlocks, ancientReceipts = append(ancientBlocks, blockChain[i]), append(ancientReceipts, receiptChain[i])
 		} else {
 			liveBlocks, liveReceipts = append(liveBlocks, blockChain[i]), append(liveReceipts, receiptChain[i])
