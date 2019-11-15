@@ -355,7 +355,7 @@ func (c *Context) getHeaderByHash(hash common.Hash) *types.Header {
 
 func (c *Context) getChainRandomHeader(parent *types.Header) *types.Header {
 	distance := parent.Nonce.Uint64()
-	if distance >= params.CanonicalDepth {
+	if distance >= params.CanonicalDepth*3 {
 		// optimization for canonical chain
 		seedNumber := parent.Number.Uint64() - distance
 		return c.getHeaderByNumber(seedNumber)
