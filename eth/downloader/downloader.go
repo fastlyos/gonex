@@ -825,6 +825,9 @@ func (d *Downloader) findAncestor(p *peerConnection, remoteHeader *types.Header)
 	if floor > 0 {
 		start = uint64(floor)
 	}
+	if end > localHeight {
+		end = localHeight
+	}
 	p.log.Trace("Binary searching for common ancestor", "start", start, "end", end)
 
 	for start+1 < end {
