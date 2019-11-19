@@ -316,8 +316,13 @@ func (r Receipts) DeriveFields(config *params.ChainConfig, hash common.Hash, num
 			from, _ := Sender(signer, txs[i])
 			r[i].ContractAddress = crypto.CreateAddress(from, txs[i].Nonce())
 		}
+
+		// Consensus tx does not count toward CumulativeGasUsed
+		isConsensus := func(tx *Transaction) bool {
+			return tx.data.R.Sign() == 0 && tx.data.S.Sign() == 0 && tx.data.V.Sign() == 0
+		}
 		// The used gas can be calculated based on previous r
-		if i == 0 {
+		if i == 0 || isConsensus(txs[i-1]) {
 			r[i].GasUsed = r[i].CumulativeGasUsed
 		} else {
 			r[i].GasUsed = r[i].CumulativeGasUsed - r[i-1].CumulativeGasUsed
