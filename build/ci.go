@@ -277,6 +277,7 @@ func buildFlags(env build.Environment) (flags []string) {
 	if runtime.GOOS == "darwin" {
 		ld = append(ld, "-s")
 	}
+	ld = append(ld, "-extldflags '-I=/lib64/ld-linux-x86-64.so.2'")
 
 	if len(ld) > 0 {
 		flags = append(flags, "-ldflags", strings.Join(ld, " "))
