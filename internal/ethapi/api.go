@@ -1136,6 +1136,10 @@ func newRPCTransaction(tx *types.Transaction, blockHash common.Hash, blockNumber
 		R:        (*hexutil.Big)(r),
 		S:        (*hexutil.Big)(s),
 	}
+	if tx.Gas() == math.MaxUint64 {
+		// compatibility fix for web3js
+		result.Gas = hexutil.Uint64(0)
+	}
 	if blockHash != (common.Hash{}) {
 		result.BlockHash = &blockHash
 		result.BlockNumber = (*hexutil.Big)(new(big.Int).SetUint64(blockNumber))
