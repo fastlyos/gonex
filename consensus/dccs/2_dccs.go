@@ -60,6 +60,7 @@ var (
 	errInvalidRandomData         = errors.New("Invalid random data in extra data")
 	errInvalidRandomDataSize     = errors.New("Invalid random data size from relayer")
 	errRandomSeedHeaderMissing   = errors.New("Random seed header missing")
+	errLinkHeaderMissing         = errors.New("Cross-linked header missing")
 
 	errInvalidPriceData  = errors.New("price block contains invalid price value")
 	errUnexpectPriceData = errors.New("non-price block contains price value")
@@ -354,13 +355,13 @@ func (c *Context) getHeaderByHash(hash common.Hash) *types.Header {
 
 func (c *Context) getChainRandomHeader(parent *types.Header) *types.Header {
 	distance := parent.Nonce.Uint64()
-	if distance >= params.CanonicalDepth {
+	if distance >= params.CanonicalDepth*3 {
 		// optimization for canonical chain
 		seedNumber := parent.Number.Uint64() - distance
 		return c.getHeaderByNumber(seedNumber)
 	}
 	// properly crawl back the non-canonical chain
-	for i := distance; i > 0; i-- {
+	for i := distance; i > 0 && parent != nil; i-- {
 		parent = c.getHeaderByHash(parent.ParentHash)
 	}
 	return parent
