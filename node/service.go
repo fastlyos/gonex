@@ -62,6 +62,9 @@ func (ctx *ServiceContext) OpenDatabaseWithFreezer(name string, cache int, handl
 	switch {
 	case freezer == "":
 		freezer = filepath.Join(root, "ancient")
+		if empty, _ := IsDirEmpty(freezer); empty {
+			return rawdb.NewLevelDBDatabase(root, cache, handles, namespace)
+		}
 	case !filepath.IsAbs(freezer):
 		freezer = ctx.config.ResolvePath(freezer)
 	}
