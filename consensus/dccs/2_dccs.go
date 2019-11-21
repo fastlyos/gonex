@@ -286,7 +286,7 @@ func (c *Context) verifySeal2() error {
 	}
 
 	// Ensure that the difficulty corresponds to the turn-ness of the signer
-	signerDifficulty := queue.difficulty(signer, c.getHeaderByHash, c.engine.signatures)
+	signerDifficulty := queue.difficulty(signer)
 	if header.Difficulty.Uint64() != signerDifficulty {
 		return errInvalidDifficulty
 	}
@@ -503,7 +503,7 @@ func (c *Context) prepare2(header *types.Header) error {
 	}
 
 	// Set the correct difficulty
-	difficulty := queue.difficulty(c.engine.signer, c.chain.GetHeaderByHash, c.engine.signatures)
+	difficulty := queue.difficulty(c.engine.signer)
 	header.Difficulty = new(big.Int).SetUint64(difficulty)
 
 	var price *Price
@@ -610,7 +610,7 @@ func (c *Context) seal2(block *types.Block, results chan<- *types.Block, stop <-
 	// Sweet, the protocol permits us to sign the block, wait for our time
 	delay := time.Unix(int64(header.Time), 0).Sub(time.Now()) // nolint: gosimple
 	// Find the signer offset
-	offset, err := queue.offset(signer, c.chain.GetHeaderByHash, c.engine.signatures)
+	offset, err := queue.offset(signer)
 	if err != nil {
 		return err
 	}

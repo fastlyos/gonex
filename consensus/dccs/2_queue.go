@@ -28,7 +28,6 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/log"
-	lru "github.com/hashicorp/golang-lru"
 	"golang.org/x/crypto/sha3"
 )
 
@@ -139,10 +138,7 @@ func (q *SealingQueue) isActive(address common.Address) bool {
 	return active
 }
 
-func (q *SealingQueue) offset(signer common.Address,
-	getHeaderByHash func(common.Hash) *types.Header,
-	sigCache *lru.ARCCache) (int, error) {
-
+func (q *SealingQueue) offset(signer common.Address) (int, error) {
 	activeLen := len(q.active)
 
 	if activeLen-len(q.recent) <= 1 {
@@ -193,15 +189,11 @@ func (q *SealingQueue) offset(signer common.Address,
 	return offset, nil
 }
 
-func (q *SealingQueue) difficulty(address common.Address,
-	getHeaderByHash func(common.Hash) *types.Header,
-	sigCache *lru.ARCCache) uint64 {
-
-	offset, err := q.offset(address, getHeaderByHash, sigCache)
+func (q *SealingQueue) difficulty(address common.Address) uint64 {
+	offset, err := q.offset(address)
 	if err != nil {
 		return 0
 	}
-
 	return uint64(len(q.active) - offset)
 }
 
