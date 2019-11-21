@@ -481,7 +481,7 @@ func (s *Ethereum) StartMining(threads int) error {
 				return fmt.Errorf("cannot read state of current header: %v", err)
 			}
 			header := s.blockchain.CurrentHeader()
-			dccs.Authorize(eb, wallet.SignData, state, header)
+			dccs.Authorize(eb, wallet.SignData, state, header, s.accountManager)
 		}
 		// If mining is started, we can disable the transaction rejection mechanism
 		// introduced to speed sync times.

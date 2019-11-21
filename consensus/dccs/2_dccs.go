@@ -64,6 +64,10 @@ var (
 
 	errInvalidPriceData  = errors.New("price block contains invalid price value")
 	errUnexpectPriceData = errors.New("non-price block contains price value")
+	errNoAccountManager  = errors.New("no account manager")
+	errNoSignFn          = errors.New("no SignData function for account")
+	errNoAccountUnlocked = errors.New("no account unlocked")
+	errNoEligibleAccount = errors.New("no eligible account for sealing")
 )
 
 // Init the second hardfork of DCCS consensus
@@ -421,7 +425,7 @@ func (c *Context) prepareBeneficiary2(header *types.Header) {
 			log.Error("Unable to recover signature", "err", err)
 			return
 		}
-		if s == c.engine.signer {
+		if s == header.Coinbase {
 			// found the previous sealed block
 			header.Coinbase = h.Coinbase
 			return
@@ -457,12 +461,18 @@ func (c *Context) prepare2(header *types.Header) error {
 		})
 	}
 
-	c.prepareBeneficiary2(header)
-
-	queue, err := c.getSealingQueue(header.ParentHash)
+	sealer, difficulty, err := c.nextSealer(header)
 	if err != nil {
 		return err
 	}
+	if sealer == nil {
+		return errNoEligibleAccount
+	}
+	header.Coinbase = *sealer
+	c.prepareBeneficiary2(header)
+
+	// TODO: header.Difficulty.SetUint64(difficulty)
+	header.Difficulty = new(big.Int).SetUint64(difficulty)
 
 	// Ensure the timestamp has the correct delay
 	header.Time = parent.Time + c.engine.config.Period
@@ -501,10 +511,6 @@ func (c *Context) prepare2(header *types.Header) error {
 		// record the distant from the last sealer application block
 		header.Nonce = c.getBlockNonce(parent)
 	}
-
-	// Set the correct difficulty
-	difficulty := queue.difficulty(c.engine.signer)
-	header.Difficulty = new(big.Int).SetUint64(difficulty)
 
 	var price *Price
 	if c.engine.config.IsPriceBlock(number) && len(c.engine.priceURL) > 0 {
@@ -590,15 +596,14 @@ func (c *Context) seal2(block *types.Block, results chan<- *types.Block, stop <-
 	if c.engine.config.Period == 0 && len(block.Transactions()) == 0 {
 		return errWaitTransactions
 	}
-	// Don't hold the signer fields for the entire sealing procedure
-	c.engine.lock.RLock()
-	signer, signFn := c.engine.signer, c.engine.signFn
-	c.engine.lock.RUnlock()
 
 	queue, err := c.getSealingQueue(header.ParentHash)
 	if err != nil {
 		return err
 	}
+
+	signer := queue.sealerFromDifficulty(header.Difficulty.Uint64())
+	log.Error("sealerFromDifficulty", "address", signer)
 
 	if !queue.isActive(signer) {
 		return errUnauthorizedSigner
@@ -619,6 +624,17 @@ func (c *Context) seal2(block *types.Block, results chan<- *types.Block, stop <-
 		wiggle := c.engine.calcDelayTimeForOffset(offset)
 		delay += wiggle
 		log.Trace("Out-of-turn signing requested", "wiggle", common.PrettyDuration(wiggle))
+	}
+
+	c.engine.lock.RLock()
+	accManager := c.engine.accManager
+	c.engine.lock.RUnlock()
+	if accManager == nil {
+		return errNoAccountManager
+	}
+	signFn := accManager.SignFunction(signer)
+	if signFn == nil {
+		return errNoSignFn
 	}
 	// Sign all the things!
 	sighash, err := signFn(accounts.Account{Address: signer}, accounts.MimetypeClique, DccsRLP(header))

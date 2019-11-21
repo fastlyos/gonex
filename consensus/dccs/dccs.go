@@ -140,6 +140,8 @@ type Dccs struct {
 	signFn accounts.SignerFn // Signer function to authorize hashes with
 	lock   sync.RWMutex      // Protects the signer fields
 
+	accManager *accounts.Manager
+
 	// CoLoa hard-fork
 	sealingQueueCache *lru.ARCCache // SealingQueue of recent blocks
 	extDataCache      *lru.ARCCache // ExtendedData of recent blocks
@@ -347,7 +349,7 @@ func (d *Dccs) FinalizeAndAssemble(chain consensus.ChainReader, header *types.He
 
 // Authorize injects a private key into the consensus engine to mint new blocks
 // with.
-func (d *Dccs) Authorize(signer common.Address, signFn accounts.SignerFn, state *state.StateDB, header *types.Header) {
+func (d *Dccs) Authorize(signer common.Address, signFn accounts.SignerFn, state *state.StateDB, header *types.Header, accManager *accounts.Manager) {
 	if d.config.IsThangLong(header.Number) {
 		size := state.GetCodeSize(params.GovernanceAddress)
 		log.Info("smart contract size", "size", size)
@@ -369,6 +371,7 @@ func (d *Dccs) Authorize(signer common.Address, signFn accounts.SignerFn, state 
 
 	d.signer = signer
 	d.signFn = signFn
+	d.accManager = accManager
 }
 
 // Seal implements consensus.Engine, attempting to create a sealed block using

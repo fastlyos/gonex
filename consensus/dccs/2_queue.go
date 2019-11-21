@@ -138,6 +138,17 @@ func (q *SealingQueue) isActive(address common.Address) bool {
 	return active
 }
 
+// position returns the possition of the signer in the active queue,
+// or -1 if not in the active queue
+func (q *SealingQueue) position(signer common.Address) int {
+	for i, sig := range q.sortedQueue() {
+		if sig == signer {
+			return i
+		}
+	}
+	return -1
+}
+
 func (q *SealingQueue) offset(signer common.Address) (int, error) {
 	activeLen := len(q.active)
 
@@ -150,28 +161,19 @@ func (q *SealingQueue) offset(signer common.Address) (int, error) {
 		return activeLen, errRecentlySigned
 	}
 
-	queue := q.sortedQueue()
-
-	signerPosition := func(signer common.Address) (int, bool) {
-		for i, sig := range queue {
-			if sig == signer {
-				return i, true
-			}
-		}
-		return -1, false
-	}
-
-	pos, ok := signerPosition(signer)
-	if !ok {
+	pos := q.position(signer)
+	if pos < 0 {
 		// unable to find the signer position
 		return activeLen, errUnauthorizedSigner
 	}
 
-	prevPos, ok := signerPosition(q.sealer)
-	if !ok {
+	prevPos := q.position(q.sealer)
+	if prevPos < 0 {
 		// unable to find the previous signer position: should never happen
 		return activeLen, errUnknownPreviousSealer
 	}
+
+	queue := q.sortedQueue()
 
 	offset := pos - prevPos - 1
 	if offset < 0 {
@@ -195,6 +197,23 @@ func (q *SealingQueue) difficulty(address common.Address) uint64 {
 		return 0
 	}
 	return uint64(len(q.active) - offset)
+}
+
+func (q *SealingQueue) sealerFromDifficulty(difficulty uint64) common.Address {
+	queue := q.sortedQueue()
+	prevPos := q.position(q.sealer)
+	if prevPos < 0 {
+		// unable to find the previous signer position: should never happen
+		log.Error("Unknown previous signer", "sealer", q.sealer)
+		return common.Address{}
+	}
+
+	offset := len(q.active) - int(difficulty)
+	pos := offset + prevPos + 1
+	if pos >= len(queue) {
+		pos %= len(queue)
+	}
+	return queue[pos]
 }
 
 // recents len is MIN(lastActiveLen,activeLen)*2/3
@@ -352,4 +371,60 @@ func (c *Context) crawlSealerApplications(header *types.Header) ([]SealerApplica
 		}
 	}
 	return apps, nil
+}
+
+// nextSealer returns the next account to seal for the given header
+func (c *Context) nextSealer(header *types.Header) (sealer *common.Address, diff uint64, err error) {
+	q, err := c.getSealingQueue(header.ParentHash)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	c.engine.lock.RLock()
+	accManager := c.engine.accManager
+	c.engine.lock.RUnlock()
+
+	if accManager == nil {
+		return nil, 0, errNoAccountManager
+	}
+	sealers := accManager.UnlockedAccounts()
+	if len(sealers) == 0 {
+		return nil, 0, errNoAccountUnlocked
+	}
+
+	// short-circuit for single sealer node
+	if len(sealers) == 1 {
+		sealer := sealers[0]
+		if !q.isActive(sealer) {
+			return nil, 0, errUnauthorizedSigner
+		}
+		if q.isRecentlySigned(sealer) {
+			return nil, 0, errRecentlySigned
+		}
+		return &sealer, q.difficulty(sealer), nil
+	}
+
+	prevPos := q.position(q.sealer)
+	if prevPos < 0 {
+		// unable to find the previous signer position: should never happen
+		return nil, 0, errUnknownPreviousSealer
+	}
+
+	queue := q.sortedQueue()
+	queueLen := len(queue)
+	for offset := 0; offset < queueLen; offset++ {
+		pos := offset + prevPos + 1
+		if pos >= queueLen {
+			pos %= queueLen
+		}
+		sealer := queue[pos]
+		for _, s := range sealers {
+			if sealer == s {
+				diff := uint64(len(q.active) - offset)
+				return &sealer, diff, nil
+			}
+		}
+	}
+
+	return nil, 0, errNoEligibleAccount
 }
