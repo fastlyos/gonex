@@ -215,11 +215,13 @@ func (c *Context) verifyCascadingFields2() error {
 		// Verify VDF ouput here
 		seedHeader := c.getChainRandomHeader(parent)
 		if seedHeader == nil {
-			return errRandomSeedHeaderMissing
-		}
-		input := seedHeader.Hash()
-		if !c.engine.queueShuffler.Verify(input[:], randomData, c.engine.config.RandomSeedIteration) {
-			return errInvalidRandomData
+			// accept the random output if the input header is missing (our fault, not their)
+			log.Error(errRandomSeedHeaderMissing.Error())
+		} else {
+			input := seedHeader.Hash()
+			if !c.engine.queueShuffler.Verify(input[:], randomData, c.engine.config.RandomSeedIteration) {
+				return errInvalidRandomData
+			}
 		}
 		log.Info("New random data received", "random data", common.Bytes2Hex(randomData))
 	} else {
