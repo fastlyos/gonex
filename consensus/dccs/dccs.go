@@ -125,10 +125,6 @@ var (
 	errRecentlySigned = errors.New("recently signed")
 )
 
-// SignerFn is a signer callback function to request a header to be signed by a
-// backing account.
-type SignerFn func(accounts.Account, string, []byte) ([]byte, error)
-
 // Dccs is the proof-of-foundation consensus engine proposed to support the
 // Ethereum testnet following the Ropsten attacks.
 type Dccs struct {
@@ -140,9 +136,9 @@ type Dccs struct {
 
 	proposals map[common.Address]bool // Current list of proposals we are pushing
 
-	signer common.Address // Ethereum address of the signing key
-	signFn SignerFn       // Signer function to authorize hashes with
-	lock   sync.RWMutex   // Protects the signer fields
+	signer common.Address    // Ethereum address of the signing key
+	signFn accounts.SignerFn // Signer function to authorize hashes with
+	lock   sync.RWMutex      // Protects the signer fields
 
 	// CoLoa hard-fork
 	sealingQueueCache *lru.ARCCache // SealingQueue of recent blocks
@@ -351,7 +347,7 @@ func (d *Dccs) FinalizeAndAssemble(chain consensus.ChainReader, header *types.He
 
 // Authorize injects a private key into the consensus engine to mint new blocks
 // with.
-func (d *Dccs) Authorize(signer common.Address, signFn SignerFn, state *state.StateDB, header *types.Header) {
+func (d *Dccs) Authorize(signer common.Address, signFn accounts.SignerFn, state *state.StateDB, header *types.Header) {
 	if d.config.IsThangLong(header.Number) {
 		size := state.GetCodeSize(params.GovernanceAddress)
 		log.Info("smart contract size", "size", size)
