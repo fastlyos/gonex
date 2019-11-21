@@ -42,6 +42,11 @@ const (
 	MimetypeTextPlain         = "text/plain"
 )
 
+const (
+	StatusLocked   = "Locked"
+	StatusUnlocked = "Unlocked"
+)
+
 // Wallet represents a software or hardware wallet that might contain one or more
 // accounts (derived from the same seed).
 type Wallet interface {
