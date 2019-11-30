@@ -44,9 +44,9 @@ func (w *keystoreWallet) Status() (string, error) {
 	defer w.keystore.mu.RUnlock()
 
 	if _, ok := w.keystore.unlocked[w.account.Address]; ok {
-		return "Unlocked", nil
+		return accounts.StatusUnlocked, nil
 	}
-	return "Locked", nil
+	return accounts.StatusLocked, nil
 }
 
 // Open implements accounts.Wallet, but is a noop for plain wallets since there
