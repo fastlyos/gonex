@@ -149,6 +149,11 @@ web3._extend({
 			call: 'dccs_discard',
 			params: 1
 		}),
+		new web3._extend.Method({
+			name: 'queue',
+			call: 'dccs_queue',
+			params: 1
+		}),
 	],
 	properties: [
 		new web3._extend.Property({
