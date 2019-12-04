@@ -461,18 +461,21 @@ func (c *Context) prepare2(header *types.Header) error {
 		})
 	}
 
-	sealer, difficulty, err := c.nextSealer(header)
-	if err != nil {
-		return err
+	if header.Coinbase == (common.Address{}) {
+		// non-mining preparation
+		header.Difficulty = common.Big0
+	} else {
+		sealer, difficulty, err := c.nextSealer(header)
+		if err != nil {
+			return err
+		}
+		if sealer == nil {
+			return errNoEligibleAccount
+		}
+		header.Coinbase = *sealer
+		c.prepareBeneficiary2(header)
+		header.Difficulty = new(big.Int).SetUint64(difficulty)
 	}
-	if sealer == nil {
-		return errNoEligibleAccount
-	}
-	header.Coinbase = *sealer
-	c.prepareBeneficiary2(header)
-
-	// TODO: header.Difficulty.SetUint64(difficulty)
-	header.Difficulty = new(big.Int).SetUint64(difficulty)
 
 	// Ensure the timestamp has the correct delay
 	header.Time = parent.Time + c.engine.config.Period
