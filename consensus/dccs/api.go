@@ -129,9 +129,11 @@ func (api *API) Queue(ctx context.Context, kind string) ([]string, error) {
 	case "leaked":
 		return api.dccs.getLeakedSealers(api.chain)
 	case "joined":
+		return api.dccs.getJoinedSealers(api.chain)
 	case "active":
+		return api.dccs.getActiveSealers(api.chain)
 	case "ready":
-		fallthrough
+		return api.dccs.getReadySealers(api.chain)
 	default:
 	}
 	return []string{"Unimplemented"}, nil
@@ -159,6 +161,62 @@ func (d *Dccs) getLeakedSealers(chain consensus.ChainReader) ([]string, error) {
 	sealers := []string{}
 	for _, signer := range signers {
 		if _, ok := queue.active[signer]; !ok {
+			sealers = append(sealers, signer.String())
+		}
+	}
+	return sealers, nil
+}
+
+func (d *Dccs) getJoinedSealers(chain consensus.ChainReader) ([]string, error) {
+	signers, err := d.getJoinedSigners(chain)
+	if err != nil {
+		log.Error("Unable to get joined signers", "err", err)
+		return nil, err
+	}
+
+	sealers := []string{}
+	for _, signer := range signers {
+		sealers = append(sealers, signer.String())
+	}
+	return sealers, nil
+}
+
+func (d *Dccs) getActiveSealers(chain consensus.ChainReader) ([]string, error) {
+	c := Context{
+		head:   chain.CurrentHeader(),
+		engine: d,
+		chain:  chain,
+	}
+	// Retrieve the sealing queue verify this header
+	queue, err := c.getSealingQueue(c.head.ParentHash)
+	if err != nil {
+		log.Error("Unable to get the sealing queue", "err", err)
+		return nil, err
+	}
+
+	sealers := make([]string, 0, len(queue.active))
+	for signer := range queue.active {
+		sealers = append(sealers, signer.String())
+	}
+	return sealers, nil
+}
+
+func (d *Dccs) getReadySealers(chain consensus.ChainReader) ([]string, error) {
+	c := Context{
+		head:   chain.CurrentHeader(),
+		engine: d,
+		chain:  chain,
+	}
+	// Retrieve the sealing queue verify this header
+	queue, err := c.getSealingQueue(c.head.ParentHash)
+	if err != nil {
+		log.Error("Unable to get the sealing queue", "err", err)
+		return nil, err
+	}
+
+	sealers := make([]string, 0, len(queue.active))
+	for signer := range queue.active {
+		if _, ok := queue.recent[signer]; !ok {
 			sealers = append(sealers, signer.String())
 		}
 	}
