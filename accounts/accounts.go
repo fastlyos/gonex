@@ -42,6 +42,16 @@ const (
 	MimetypeTextPlain         = "text/plain"
 )
 
+const (
+	StatusLocked   = "Locked"
+	StatusUnlocked = "Unlocked"
+)
+
+// SignerFn is a signer callback function to request a header to be signed by a
+// backing account.
+// Implemented by Wallet.SignData
+type SignerFn func(Account, string, []byte) ([]byte, error)
+
 // Wallet represents a software or hardware wallet that might contain one or more
 // accounts (derived from the same seed).
 type Wallet interface {

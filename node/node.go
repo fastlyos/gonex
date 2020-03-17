@@ -19,6 +19,7 @@ package node
 import (
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -627,10 +628,28 @@ func (n *Node) OpenDatabaseWithFreezer(name string, cache, handles int, freezer,
 	switch {
 	case freezer == "":
 		freezer = filepath.Join(root, "ancient")
+		if empty, _ := IsDirEmpty(freezer); empty {
+			return rawdb.NewLevelDBDatabase(root, cache, handles, namespace)
+		}
 	case !filepath.IsAbs(freezer):
 		freezer = n.config.ResolvePath(freezer)
 	}
 	return rawdb.NewLevelDBDatabaseWithFreezer(root, cache, handles, freezer, namespace)
+}
+
+// IsDirEmpty return true if either the dir is empty or not exist
+func IsDirEmpty(name string) (bool, error) {
+	f, err := os.Open(name)
+	if err != nil {
+		return true, err
+	}
+	defer f.Close()
+
+	_, err = f.Readdirnames(1) // Or f.Readdir(1)
+	if err == io.EOF {
+		return true, nil
+	}
+	return false, err // not empty
 }
 
 // ResolvePath returns the absolute path of a resource in the instance directory.

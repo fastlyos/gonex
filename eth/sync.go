@@ -175,10 +175,6 @@ func (pm *ProtocolManager) synchronise(peer *peer) {
 	pHead, pTd := peer.Head()
 	cmp := core.ChainCompare(pTd, td, pHead, hash)
 	if cmp <= 0 {
-		if cmp < 0 && currentBlock.NumberU64() > 0 {
-			// broadcast our better chain back to the peer
-			go pm.BroadcastBlock(currentBlock, true)
-		}
 		return
 	}
 

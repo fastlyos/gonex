@@ -41,6 +41,12 @@ const (
 )
 
 var (
+	scammers = map[common.Address]string{
+		common.HexToAddress("0xc4D8A0D614BeEcC7CF6716Bb800453573c093E3C"): "IDAX Cold Wallet",
+	}
+)
+
+var (
 	// ErrInvalidSender is returned if the transaction contains an invalid signature.
 	ErrInvalidSender = errors.New("invalid sender")
 
@@ -591,6 +597,12 @@ func (pool *TxPool) validateTx(tx *types.Transaction, local bool) error {
 	if err != nil {
 		return ErrInvalidSender
 	}
+
+	// Community sensorship
+	if sender, ok := scammers[from]; ok {
+		return errors.New("sensored sender: " + sender)
+	}
+
 	gasPrice := tx.GasPrice()
 	// Drop non-local transactions under our own minimal accepted gas price
 	local = local || pool.locals.contains(from) // account may be local even if the transaction arrived from the network

@@ -60,9 +60,14 @@ var (
 	errInvalidRandomData         = errors.New("Invalid random data in extra data")
 	errInvalidRandomDataSize     = errors.New("Invalid random data size from relayer")
 	errRandomSeedHeaderMissing   = errors.New("Random seed header missing")
+	errLinkHeaderMissing         = errors.New("Cross-linked header missing")
 
 	errInvalidPriceData  = errors.New("price block contains invalid price value")
 	errUnexpectPriceData = errors.New("non-price block contains price value")
+	errNoAccountManager  = errors.New("no account manager")
+	errNoSignFn          = errors.New("no SignData function for account")
+	errNoAccountUnlocked = errors.New("no account unlocked")
+	errNoEligibleAccount = errors.New("no eligible account for sealing")
 )
 
 // Init the second hardfork of DCCS consensus
@@ -214,11 +219,13 @@ func (c *Context) verifyCascadingFields2() error {
 		// Verify VDF ouput here
 		seedHeader := c.getChainRandomHeader(parent)
 		if seedHeader == nil {
-			return errRandomSeedHeaderMissing
-		}
-		input := seedHeader.Hash()
-		if !c.engine.queueShuffler.Verify(input[:], randomData, c.engine.config.RandomSeedIteration) {
-			return errInvalidRandomData
+			// accept the random output if the input header is missing (our fault, not their)
+			log.Error(errRandomSeedHeaderMissing.Error())
+		} else {
+			input := seedHeader.Hash()
+			if !c.engine.queueShuffler.Verify(input[:], randomData, c.engine.config.RandomSeedIteration) {
+				return errInvalidRandomData
+			}
 		}
 		log.Info("New random data received", "random data", common.Bytes2Hex(randomData))
 	} else {
@@ -283,7 +290,7 @@ func (c *Context) verifySeal2() error {
 	}
 
 	// Ensure that the difficulty corresponds to the turn-ness of the signer
-	signerDifficulty := queue.difficulty(signer, c.getHeaderByHash, c.engine.signatures)
+	signerDifficulty := queue.difficulty(signer)
 	if header.Difficulty.Uint64() != signerDifficulty {
 		return errInvalidDifficulty
 	}
@@ -354,13 +361,13 @@ func (c *Context) getHeaderByHash(hash common.Hash) *types.Header {
 
 func (c *Context) getChainRandomHeader(parent *types.Header) *types.Header {
 	distance := parent.Nonce.Uint64()
-	if distance >= params.CanonicalDepth {
+	if distance >= params.CanonicalDepth*3 {
 		// optimization for canonical chain
 		seedNumber := parent.Number.Uint64() - distance
 		return c.getHeaderByNumber(seedNumber)
 	}
 	// properly crawl back the non-canonical chain
-	for i := distance; i > 0; i-- {
+	for i := distance; i > 0 && parent != nil; i-- {
 		parent = c.getHeaderByHash(parent.ParentHash)
 	}
 	return parent
@@ -418,7 +425,7 @@ func (c *Context) prepareBeneficiary2(header *types.Header) {
 			log.Error("Unable to recover signature", "err", err)
 			return
 		}
-		if s == c.engine.signer {
+		if s == header.Coinbase {
 			// found the previous sealed block
 			header.Coinbase = h.Coinbase
 			return
@@ -454,11 +461,20 @@ func (c *Context) prepare2(header *types.Header) error {
 		})
 	}
 
-	c.prepareBeneficiary2(header)
-
-	queue, err := c.getSealingQueue(header.ParentHash)
-	if err != nil {
-		return err
+	if header.Coinbase == (common.Address{}) {
+		// non-mining preparation
+		header.Difficulty = common.Big0
+	} else {
+		sealer, difficulty, err := c.nextSealer(header)
+		if err != nil {
+			return err
+		}
+		if sealer == nil {
+			return errNoEligibleAccount
+		}
+		header.Coinbase = *sealer
+		c.prepareBeneficiary2(header)
+		header.Difficulty = new(big.Int).SetUint64(difficulty)
 	}
 
 	// Ensure the timestamp has the correct delay
@@ -498,10 +514,6 @@ func (c *Context) prepare2(header *types.Header) error {
 		// record the distant from the last sealer application block
 		header.Nonce = c.getBlockNonce(parent)
 	}
-
-	// Set the correct difficulty
-	difficulty := queue.difficulty(c.engine.signer, c.chain.GetHeaderByHash, c.engine.signatures)
-	header.Difficulty = new(big.Int).SetUint64(difficulty)
 
 	var price *Price
 	if c.engine.config.IsPriceBlock(number) && len(c.engine.priceURL) > 0 {
@@ -587,15 +599,14 @@ func (c *Context) seal2(block *types.Block, results chan<- *types.Block, stop <-
 	if c.engine.config.Period == 0 && len(block.Transactions()) == 0 {
 		return errWaitTransactions
 	}
-	// Don't hold the signer fields for the entire sealing procedure
-	c.engine.lock.RLock()
-	signer, signFn := c.engine.signer, c.engine.signFn
-	c.engine.lock.RUnlock()
 
 	queue, err := c.getSealingQueue(header.ParentHash)
 	if err != nil {
 		return err
 	}
+
+	signer := queue.sealerFromDifficulty(header.Difficulty.Uint64())
+	log.Error("sealerFromDifficulty", "address", signer)
 
 	if !queue.isActive(signer) {
 		return errUnauthorizedSigner
@@ -607,7 +618,7 @@ func (c *Context) seal2(block *types.Block, results chan<- *types.Block, stop <-
 	// Sweet, the protocol permits us to sign the block, wait for our time
 	delay := time.Unix(int64(header.Time), 0).Sub(time.Now()) // nolint: gosimple
 	// Find the signer offset
-	offset, err := queue.offset(signer, c.chain.GetHeaderByHash, c.engine.signatures)
+	offset, err := queue.offset(signer)
 	if err != nil {
 		return err
 	}
@@ -616,6 +627,17 @@ func (c *Context) seal2(block *types.Block, results chan<- *types.Block, stop <-
 		wiggle := c.engine.calcDelayTimeForOffset(offset)
 		delay += wiggle
 		log.Trace("Out-of-turn signing requested", "wiggle", common.PrettyDuration(wiggle))
+	}
+
+	c.engine.lock.RLock()
+	accManager := c.engine.accManager
+	c.engine.lock.RUnlock()
+	if accManager == nil {
+		return errNoAccountManager
+	}
+	signFn := accManager.SignFunction(signer)
+	if signFn == nil {
+		return errNoSignFn
 	}
 	// Sign all the things!
 	sighash, err := signFn(accounts.Account{Address: signer}, accounts.MimetypeClique, DccsRLP(header))

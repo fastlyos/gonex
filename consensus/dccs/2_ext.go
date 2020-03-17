@@ -332,6 +332,10 @@ func (c *Context) getAnchorDest(header *types.Header) (*types.Header, error) {
 	linkHeader := header
 	if !hasAnchorData(header) {
 		linkHeader = c.getLinkDest(header)
+		if linkHeader == nil {
+			log.Error("getLinkDest returns nil", "number", header.Number, "digest", header.MixDigest)
+			return nil, errLinkHeaderMissing
+		}
 	}
 	anchorData, err := c.getAnchorData(linkHeader)
 	if err != nil {

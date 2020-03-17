@@ -23,6 +23,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/event"
+	"github.com/ethereum/go-ethereum/log"
 )
 
 // Config contains the settings of the global account manager.
@@ -175,6 +176,40 @@ func (am *Manager) Accounts() []common.Address {
 		}
 	}
 	return addresses
+}
+
+// UnlockedAccounts returns all account addresses of currently unlocked wallets
+func (am *Manager) UnlockedAccounts() []common.Address {
+	am.lock.RLock()
+	defer am.lock.RUnlock()
+
+	addresses := make([]common.Address, 0, len(am.wallets)) // return [] instead of nil if empty
+	for _, wallet := range am.wallets {
+		if status, _ := wallet.Status(); status != StatusUnlocked {
+			continue
+		}
+		for _, account := range wallet.Accounts() {
+			addresses = append(addresses, account.Address)
+		}
+	}
+	return addresses
+}
+
+// SignFunction finds the SignerFn for the given address from the unlocked wallets
+func (am *Manager) SignFunction(address common.Address) SignerFn {
+	am.lock.RLock()
+	defer am.lock.RUnlock()
+
+	wallet, err := am.Find(Account{Address: address})
+	if wallet == nil || err != nil {
+		log.Error("Sealer account unavailable locally", "err", err, "address", address)
+		return nil
+	}
+	if status, _ := wallet.Status(); status != StatusUnlocked {
+		log.Error("Sealer wallet locked", "wallet", wallet)
+		return nil
+	}
+	return wallet.SignData
 }
 
 // Find attempts to locate the wallet corresponding to a specific account. Since
